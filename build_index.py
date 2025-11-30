@@ -1,274 +1,222 @@
-from __future__ import annotations
-
 import os
-import pickle
-import mailbox
 import re
+import mailbox
+import pickle
 from dataclasses import dataclass
-from typing import List
+from typing import List, Dict, Optional
 
-import numpy as np
 import faiss
 from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
 
 
-# ------------------------------------------------------
-# CONFIG
-# ------------------------------------------------------
-BASE_DIR: str = "/Users/debaditya/workspace/trash_mails"
-EMBED_MODEL: str = "all-MiniLM-L6-v2"
+from email_models import EmailMessage
 
+# ============================================================
+#                 REGEX DEFINITIONS
+# ============================================================
 
-# ------------------------------------------------------
-# DATACLASS
-# ------------------------------------------------------
-@dataclass
-class EmailMessage:
-    subject: str
-    sender: str
-    date: str
-    body: str
+# ---- SUBJECT METADATA ----
+PR_FROM_SUBJECT       = re.compile(r'\(PR\s*#(\d+)\)', re.IGNORECASE)
+REPO_FROM_SUBJECT     = re.compile(r'\[([^\]]+)\]')
+TICKET_FROM_SUBJECT   = re.compile(r'\b([A-Z]+-\d+)\b')
 
-    # Extended extracted fields
-    commits: List[str] | None = None
-    pr_numbers: List[str] | None = None
-    repos: List[str] | None = None
-    issues: List[str] | None = None
-    sql_queries: List[str] | None = None
-    files_modified: List[str] | None = None   # ← NEW FIELD
-    tags: List[str] | None = None
+# ---- COMMITS ----
+COMMIT_SIMPLE = re.compile(r'\b([0-9a-f]{7,40})\b(?:\s+(.+))?')
 
-    def full_text(self) -> str:
-        """
-        Text used for embeddings.
-        Includes structured metadata for richer vector understanding.
-        """
-        extra = []
+# ---- FILE CHANGES ----
+FILES_GITHUB_PR = re.compile(
+    r'^[\*\-\u2022]?\s*[MAD]\s+([^\s]+)(?:\s+\(\d+\))?',
+    re.MULTILINE
+)
 
-        if self.commits:
-            extra.append("Commits:\n" + "\n".join(self.commits))
-        if self.pr_numbers:
-            extra.append("PRs:\n" + ", ".join(self.pr_numbers))
-        if self.repos:
-            extra.append("Repos:\n" + ", ".join(self.repos))
-        if self.issues:
-            extra.append("Issues:\n" + ", ".join(self.issues))
-        if self.sql_queries:
-            extra.append("SQL:\n" + "\n".join(self.sql_queries))
-        if self.files_modified:
-            extra.append("Files Modified:\n" + "\n".join(self.files_modified))
-
-        return f"{self.subject}\n\n{self.body}\n\n" + "\n\n".join(extra)
-
-
-# ------------------------------------------------------
-# REGEX PATTERNS
-# ------------------------------------------------------
-COMMIT_REGEX = re.compile(
-    r'(?:^|\n)[\*\-\•]?\s*([a-f0-9]{7,40})\s*[-:]\s*(.+)',
+FILES_PATTERN_1 = re.compile(
+    r'(?:(modified|added|removed|deleted|renamed|changed):\s*)([^\s]+)',
     re.IGNORECASE
 )
 
-PR_REGEX = re.compile(
-    r'(?:PR|Pull Request)\s*#?(\d+)',
-    re.IGNORECASE
+FILES_PATTERN_2 = re.compile(
+    r'^[MAD]\s+([^\s]+)\s*(?:\(\d+\))?',
+    re.MULTILINE
 )
 
-REPO_REGEX = re.compile(
-    r'github\.com/([\w\-_]+/[\w\-_]+)',
-    re.IGNORECASE
+FILES_PATTERN_3 = re.compile(
+    r'([^\s]+)\s*->\s*([^\s]+)'
 )
 
-ISSUE_REGEX = re.compile(
-    r'(?:Issue|Fixes|Closes)\s*#?(\d+)',
-    re.IGNORECASE
-)
+CHANGE_COUNT = re.compile(r'\(([0-9]+)\)')
 
-SQL_REGEX = re.compile(
-    r'((SELECT|UPDATE|DELETE|INSERT|CREATE)[\s\S]+?;)',
-    re.IGNORECASE
-)
 
-FILES_REGEX = re.compile(
-    r'(?:(modified|added|removed|deleted|renamed|changed):\s*)([\w\./\-\_]+)',
-    re.IGNORECASE
-)
-# ------------------------------------------------------
-# EXTRACTION HELPERS
-# ------------------------------------------------------
-def extract_commits(text: str) -> List[str]:
+# ============================================================
+#                 EXTRACTION HELPERS
+# ============================================================
+
+def extract_metadata_from_subject(subject: str) -> dict:
+    repos = REPO_FROM_SUBJECT.findall(subject)
+    pr_numbers = PR_FROM_SUBJECT.findall(subject)
+    tickets = TICKET_FROM_SUBJECT.findall(subject)
+
+    title = subject
+
+    # Remove repo blocks
+    if repos:
+        for r in repos:
+            title = title.replace(f'[{r}]', '')
+
+    # Remove PR numbers
+    if pr_numbers:
+        for p in pr_numbers:
+            title = title.replace(f'(PR #{p})', '')
+            title = title.replace(f'(PR#{p})', '')
+
+    # Remove tickets
+    if tickets:
+        for t in tickets:
+            title = title.replace(t + '-', '')
+            title = title.replace(t + ' ', '')
+
+    return {
+        "repos": repos or None,
+        "pr_numbers": pr_numbers or None,
+        "tickets": tickets or None,
+        "pr_title": title.strip(" -_") or None,
+    }
+
+
+def extract_commits(text: str) -> Optional[List[str]]:
     commits = []
-    for match in COMMIT_REGEX.finditer(text):
-        sha = match.group(1)
-        msg = match.group(2).strip()
-        commits.append(f"{sha} - {msg}")
-    return commits
+    for m in COMMIT_SIMPLE.finditer(text):
+        sha = m.group(1)
+        msg = m.group(2) or ""
+        commits.append(f"{sha} {msg}".strip())
+    return commits or None
 
 
-def extract_pr_numbers(text: str) -> List[str]:
-    return list({m.group(1) for m in PR_REGEX.finditer(text)})
+def extract_files_modified(text: str) -> Optional[List[str]]:
+    files = set()
+
+    for m in FILES_GITHUB_PR.finditer(text):
+        files.add(m.group(1).strip())
+
+    for m in FILES_PATTERN_1.finditer(text):
+        files.add(m.group(2).strip())
+
+    for m in FILES_PATTERN_2.finditer(text):
+        files.add(m.group(1).strip())
+
+    for m in FILES_PATTERN_3.finditer(text):
+        files.add(m.group(1).strip())
+        files.add(m.group(2).strip())
+
+    return list(files) or None
 
 
-def extract_repos(text: str) -> List[str]:
-    return list({m.group(1) for m in REPO_REGEX.finditer(text)})
+def extract_change_counts(text: str) -> Optional[Dict[str, int]]:
+    result = {}
+
+    for line in text.splitlines():
+        m = FILES_GITHUB_PR.search(line) or FILES_PATTERN_2.search(line)
+        if m:
+            path = m.group(1)
+            count = CHANGE_COUNT.search(line)
+            if count:
+                result[path] = int(count.group(1))
+
+    return result or None
 
 
-def extract_issues(text: str) -> List[str]:
-    return list({m.group(1) for m in ISSUE_REGEX.finditer(text)})
 
 
-def extract_sql(text: str) -> List[str]:
-    return [m.group(1).strip() for m in SQL_REGEX.finditer(text)]
+# ============================================================
+#                 EMAIL EXTRACTION
+# ============================================================
 
-def extract_files_modified(text: str) -> List[str]:
-    """
-    Extract filenames from GitHub-style change summaries.
-    """
-    results = []
-    for match in FILES_REGEX.finditer(text):
-        file = match.group(2).strip()
-        results.append(file)
-    return results
-
-def detect_tags(email: EmailMessage) -> List[str] | None:
-    tags = []
-
-    if "github" in email.sender.lower():
-        tags.append("github")
-    if email.commits:
-        tags.append("commit")
-    if email.pr_numbers:
-        tags.append("pr")
-    if email.issues:
-        tags.append("issue")
-    if email.repos:
-        tags.append("repo")
-    if email.sql_queries:
-        tags.append("sql")
-    if "security" in email.subject.lower():
-        tags.append("security")
-    if "otp" in email.body.lower():
-        tags.append("otp")
-    if email.files_modified:
-        tags.append("files")
-
-    return tags or None
-
-
-# ------------------------------------------------------
-# EMAIL PARSER
-# ------------------------------------------------------
-def extract_emails(mbox_path: str) -> List[EmailMessage]:
-    """
-    Extract EmailMessage dataclasses from a .mbox file.
-    """
+def extract_emails_from_mbox(mbox_path: str) -> List[EmailMessage]:
+    print(f"Parsing: {mbox_path}")
     mbox = mailbox.mbox(mbox_path)
-    messages: List[EmailMessage] = []
+    emails = []
 
     for msg in mbox:
-        try:
-            subject = msg.get("subject", "").strip()
-            sender = msg.get("from", "").strip()
-            date = msg.get("date", "").strip()
+        subject = msg['subject'] or ""
+        sender = msg['from'] or ""
+        date = msg['date'] or ""
 
-            # extract body
+        if msg.is_multipart():
             body = ""
-            if msg.is_multipart():
-                for part in msg.walk():
-                    if part.get_content_type() == "text/plain":
-                        try:
-                            body_part = (
-                                part.get_payload(decode=True)
-                                .decode(errors="ignore")
-                            )
-                            body += body_part
-                        except Exception:
-                            pass
-            else:
-                try:
-                    body = msg.get_payload(decode=True).decode(errors="ignore")
-                except Exception:
-                    body = ""
+            for part in msg.walk():
+                if part.get_content_type() == "text/plain":
+                    body += part.get_payload(decode=True).decode(errors="ignore")
+        else:
+            body = msg.get_payload(decode=True).decode(errors="ignore")
 
-            # run extractors
-            commits = extract_commits(body)
-            prs = extract_pr_numbers(body)
-            repos = extract_repos(body)
-            issues = extract_issues(body)
-            sqls = extract_sql(body)
-            files = extract_files_modified(body)
+        meta = extract_metadata_from_subject(subject)
 
-            email_obj = EmailMessage(
+        commits = extract_commits(body)
+        files = extract_files_modified(body)
+        counts = extract_change_counts(body)
+
+        emails.append(
+            EmailMessage(
                 subject=subject,
                 sender=sender,
                 date=date,
                 body=body,
-                commits=commits or None,
-                pr_numbers=prs or None,
-                repos=repos or None,
-                issues=issues or None,
-                sql_queries=sqls or None,
-                files_modified=files or None,   # ← NEW
+
+                pr_numbers=meta["pr_numbers"],
+                repos=meta["repos"],
+                tickets=meta["tickets"],
+                pr_title=meta["pr_title"],
+
+                commits=commits,
+                files_modified=files,
+                change_counts=counts
             )
+        )
 
-            email_obj.tags = detect_tags(email_obj)
-
-            messages.append(email_obj)
-
-        except Exception as e:
-            print(f"Error parsing email: {e}")
-
-    return messages
+    return emails
 
 
-# ------------------------------------------------------
-# LOAD ALL MAILBOXES
-# ------------------------------------------------------
-def load_all_mails() -> List[EmailMessage]:
-    all_messages: List[EmailMessage] = []
+# ============================================================
+#               INDEX BUILDER
+# ============================================================
 
-    for root, dirs, files in os.walk(BASE_DIR):
-        for f in files:
-            if f == "mbox":
-                path = os.path.join(root, f)
-                print("Parsing:", path)
-                msgs = extract_emails(path)
-                all_messages.extend(msgs)
+def embed_and_index(emails: List[EmailMessage]):
+    model = SentenceTransformer("all-MiniLM-L6-v2")
 
-    return all_messages
+    texts = [email.full_text() for email in emails]
 
-
-# ------------------------------------------------------
-# EMBEDDINGS + FAISS INDEX
-# ------------------------------------------------------
-def embed_and_index(messages: List[EmailMessage]) -> None:
-    model = SentenceTransformer(EMBED_MODEL)
-
-    texts = [m.full_text() for m in messages]
-
-    print("Embedding emails...")
     embeddings = model.encode(texts, batch_size=32, show_progress_bar=True)
-    embeddings = embeddings.astype("float32")
+    dim = embeddings.shape[1]
 
-    dim = embeddings.shape[1] # embedding dimension
-    index = faiss.IndexFlatL2(dim) # good enough for 5 million vectors
+    index = faiss.IndexHNSWFlat(dim, 32)
+    index.hnsw.efSearch = 64
+    index.hnsw.efConstruction = 200
+
     index.add(embeddings)
 
     faiss.write_index(index, "index.faiss")
-    print("FAISS index saved as index.faiss")
-
     with open("meta.pkl", "wb") as f:
-        pickle.dump(messages, f)
+        pickle.dump(emails, f)
 
+    print("FAISS index saved as index.faiss")
     print("Metadata saved as meta.pkl")
 
 
-# ------------------------------------------------------
-# MAIN
-# ------------------------------------------------------
-if __name__ == "__main__":
-    mails = load_all_mails()
-    print("Total emails collected:", len(mails))
-    embed_and_index(mails)
+# ============================================================
+#               MAIN EXECUTION
+# ============================================================
 
+if __name__ == "__main__":
+    ROOT = "/Users/debaditya/workspace/trash_mails"
+
+    emails = []
+
+    for folder in os.listdir(ROOT):
+        if folder.endswith(".mbox"):
+            mbox_path = os.path.join(ROOT, folder, "mbox")
+            if os.path.exists(mbox_path):
+                emails.extend(extract_emails_from_mbox(mbox_path))
+
+    print(f"Total emails collected: {len(emails)}")
+
+    embed_and_index(emails)

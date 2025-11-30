@@ -1,171 +1,183 @@
-from __future__ import annotations
-
-import sys
 import pickle
-from dataclasses import dataclass
-from typing import List
-
+import sys
 import faiss
-import numpy as np
 from sentence_transformers import SentenceTransformer
+from typing import List
 import ollama
 
-
-LLM_MODEL = "llama3.2:3b"
-EMBED_MODEL = "all-MiniLM-L6-v2"
+from email_models import EmailMessage
 
 
-# ------------------------------------------------------
-# SAME DATACLASS FROM build_index.py
-# ------------------------------------------------------
-@dataclass
-class EmailMessage:
-    subject: str
-    sender: str
-    date: str
-    body: str
-    commits: List[str] | None = None
-    pr_numbers: List[str] | None = None
-    repos: List[str] | None = None
-    issues: List[str] | None = None
-    sql_queries: List[str] | None = None
-    files_modified: List[str] | None = None   # ← NEW FIELD
-    tags: List[str] | None = None
+# ============================================================
+#                    LOAD INDEX + METADATA
+# ============================================================
 
-    def full_text(self) -> str:
-        # This is unused here, as embeddings already exist
-        return f"{self.subject}\n\n{self.body}"
+with open("meta.pkl", "rb") as f:
+    META = pickle.load(f)
+
+INDEX = faiss.read_index("index.faiss")
+MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+
+TOP_K = 5   # semantic fallback
 
 
-# ------------------------------------------------------
-# LOAD INDEX + METADATA
-# ------------------------------------------------------
-def load_metadata(path: str = "meta.pkl") -> List[EmailMessage]:
-    with open(path, "rb") as f:
-        messages = pickle.load(f)
-    return messages
+# ============================================================
+#                    HELPER FUNCTIONS
+# ============================================================
+
+def normalize(text: str) -> str:
+    """Make matching easier."""
+    return text.lower().replace("#", "").strip()
 
 
-def load_index(path: str = "index.faiss") -> faiss.Index:
-    return faiss.read_index(path)
+def find_exact_matches(query: str) -> List[int]:
+    """Find exact PR/repo/ticket/commit matches from metadata BEFORE FAISS."""
+    
+    q = normalize(query)
+    matches = []
+
+    for i, email in enumerate(META):
+
+        # ---- PR numbers ----
+        if email.pr_numbers:
+            if any(normalize(p) in q or q in normalize(p) for p in email.pr_numbers):
+                matches.append(i)
+                continue
+
+        # ---- Tickets ----
+        if email.tickets:
+            if any(normalize(t) in q for t in email.tickets):
+                matches.append(i)
+                continue
+
+        # ---- Repo names ----
+        if email.repos:
+            if any(normalize(r) in q for r in email.repos):
+                matches.append(i)
+                continue
+
+        # ---- Commit SHAs ----
+        if email.commits:
+            if any(normalize(c.split()[0]) in q for c in email.commits):
+                matches.append(i)
+                continue
+
+        # ---- File paths ----
+        if email.files_modified:
+            if any(normalize(f) in q for f in email.files_modified):
+                matches.append(i)
+                continue
+
+        # ---- PR title ----
+        if email.pr_title:
+            if normalize(email.pr_title) in q:
+                matches.append(i)
+                continue
+
+    return matches
 
 
-# ------------------------------------------------------
-# FAISS SEMANTIC SEARCH
-# ------------------------------------------------------
-def semantic_search(
-    query: str,
-    messages: List[EmailMessage],
-    index: faiss.Index,
-    top_k: int = 5,
-) -> List[EmailMessage]:
-
-    encoder = SentenceTransformer(EMBED_MODEL)
-    q_vec: np.ndarray = encoder.encode([query]).astype("float32")
-
-    distances, indices = index.search(q_vec, top_k)
-    return [messages[i] for i in indices[0]]
+def semantic_search(query: str, k: int = TOP_K) -> List[int]:
+    """FAISS semantic search fallback."""
+    query_emb = MODEL.encode([query])
+    distances, indices = INDEX.search(query_emb, k)
+    return indices[0].tolist()
 
 
-# ------------------------------------------------------
-# BUILD RAG CONTEXT (NOW SHOWS ALL STRUCTURED DATA)
-# ------------------------------------------------------
-def build_context(results: List[EmailMessage]) -> str:
-    ctx = ""
+def get_email_chunks(indices: List[int]) -> List[str]:
+    """Return formatted text for LLM."""
+    chunks = []
 
-    for i, r in enumerate(results):
+    for idx in indices:
+        email = META[idx]
 
-        ctx += f"\n--- EMAIL {i+1} ---\n"
-        ctx += f"Subject: {r.subject}\n"
-        ctx += f"From: {r.sender}\n"
-        ctx += f"Date: {r.date}\n"
-        ctx += f"Tags: {', '.join(r.tags) if r.tags else 'None'}\n\n"
+        block = f"""
+Subject: {email.subject}
+From: {email.sender}
+Date: {email.date}
 
-        # Body
-        ctx += r.body[:5000] + "\n\n"
+PR Numbers: {email.pr_numbers}
+Repo: {email.repos}
+Tickets: {email.tickets}
+PR Title: {email.pr_title}
 
-        # Commits
-        if r.commits:
-            ctx += "Commits:\n"
-            for c in r.commits:
-                ctx += f"  - {c}\n"
-            ctx += "\n"
+Commits:
+{email.commits}
 
-        # PR Numbers
-        if r.pr_numbers:
-            ctx += "PRs: " + ", ".join(r.pr_numbers) + "\n\n"
+Files Modified:
+{email.files_modified}
 
-        # Repos
-        if r.repos:
-            ctx += "Repos: " + ", ".join(r.repos) + "\n\n"
+Change Counts:
+{email.change_counts}
 
-        # Issues
-        if r.issues:
-            ctx += "Issues: " + ", ".join(r.issues) + "\n\n"
-
-        # SQL Queries
-        if r.sql_queries:
-            ctx += "SQL Queries:\n"
-            for sql in r.sql_queries:
-                ctx += f"{sql}\n\n"
-
-        # Files Modified
-        if r.files_modified:
-            ctx += "Files Modified:\n"
-            for f in r.files_modified:
-                ctx += f"  - {f}\n"
-            ctx += "\n"
-    return ctx
-
-
-# ------------------------------------------------------
-# ORIGINAL ask_llm() (UNCHANGED)
-# ------------------------------------------------------
-def ask_llm(query, context):
-    prompt = f"""
-You are an assistant reading github notification emails from PRs.
-
-User query:
-{query}
-
-Relevant emails:
-{context}
-
-Answer the user's question concisely by analyzing these emails.
-Extract important details such as:
-- what the email is about
-- links
-- actions requested (PR merged, review requested, security issue, bug fix, performance improvement, etc.)
-- summary of conversation if multiple emails
-- final actionable insights
-
-Return a clean explanation.
+Body:
+{email.body[:2000]}  # limit for safety
 """
+        chunks.append(block)
 
-    response = ollama.generate(model=LLM_MODEL, prompt=prompt)
+    return chunks
+
+
+# ============================================================
+#                       ASK LLM
+# ============================================================
+
+def ask_llm(query: str, chunks: List[str]) -> str:
+    """Send the retrieved chunks + user query to local LLM via Ollama."""
+
+    prompt = f"""
+You are an expert GitHub PR analyst.
+
+Here are the retrieved email fragments from GitHub notification emails:
+
+{'-'*60}
+{chr(10).join(chunks)}
+{'-'*60}
+
+Based on ONLY this information, answer the user query:
+
+User query: "{query}"
+
+Produce a structured, accurate, concise answer.
+If PR numbers or commits are missing in data, state that clearly.
+    """
+
+    response = ollama.generate(
+        model="llama3.2:3b",
+        prompt=prompt
+    )
+
     return response["response"]
 
 
-# ------------------------------------------------------
-# MAIN
-# ------------------------------------------------------
+# ============================================================
+#                       MAIN EXECUTION
+# ============================================================
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python query_llm.py \"search text\" [k]")
-        sys.exit(1)
+        print("Usage: python query_llm.py \"your question\"")
+        sys.exit()
 
-    query: str = sys.argv[1]
-    k: int = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+    query = sys.argv[1]
 
-    messages = load_metadata()
-    index = load_index()
+    # ---- Step 1: exact match based on metadata ----
+    exact = find_exact_matches(query)
 
-    results = semantic_search(query, messages, index, top_k=k)
-    context = build_context(results)
+    if exact:
+        print(f"[Exact-match retrieval → {len(exact)} results]")
+        indices = exact[:TOP_K]
+    else:
+        # ---- Step 2: semantic search fallback ----
+        print("[Semantic retrieval]")
+        indices = semantic_search(query)
 
-    answer = ask_llm(query, context)
+    # ---- Step 3: collect email blocks ----
+    chunks = get_email_chunks(indices)
 
-    print("\n" + "=" * 50)
+    # ---- Step 4: ask LLM ----
+    answer = ask_llm(query, chunks)
+
+    print("\n==================================================")
     print(answer)
-    print("=" * 50 + "\n")
-
+    print("==================================================\n")
