@@ -29,6 +29,7 @@ class EmailMessage:
     repos: List[str] | None = None
     issues: List[str] | None = None
     sql_queries: List[str] | None = None
+    files_modified: List[str] | None = None   # ← NEW FIELD
     tags: List[str] | None = None
 
     def full_text(self) -> str:
@@ -108,6 +109,12 @@ def build_context(results: List[EmailMessage]) -> str:
             for sql in r.sql_queries:
                 ctx += f"{sql}\n\n"
 
+        # Files Modified
+        if r.files_modified:
+            ctx += "Files Modified:\n"
+            for f in r.files_modified:
+                ctx += f"  - {f}\n"
+            ctx += "\n"
     return ctx
 
 
@@ -116,7 +123,7 @@ def build_context(results: List[EmailMessage]) -> str:
 # ------------------------------------------------------
 def ask_llm(query, context):
     prompt = f"""
-You are an assistant reading user emails.
+You are an assistant reading github notification emails from PRs.
 
 User query:
 {query}
@@ -128,7 +135,7 @@ Answer the user's question concisely by analyzing these emails.
 Extract important details such as:
 - what the email is about
 - links
-- actions requested (PR merged, review requested, OTP, security issue)
+- actions requested (PR merged, review requested, security issue, bug fix, performance improvement, etc.)
 - summary of conversation if multiple emails
 - final actionable insights
 
