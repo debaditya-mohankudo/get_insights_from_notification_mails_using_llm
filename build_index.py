@@ -11,6 +11,7 @@ from sentence_transformers import SentenceTransformer
 from bs4 import BeautifulSoup
 
 from email_models import EmailMessage
+from markdown_sections import extract_markdown_sections
 
 
 # ============================================================
@@ -134,7 +135,7 @@ def extract_emails_from_mbox(mbox_path: str) -> List[EmailMessage]:
 
     mbox = mailbox.mbox(mbox_path)
     results = []
-
+    
     for msg in tqdm(mbox, desc="Extracting emails"):
         subject = msg.get("subject", "")
         sender = msg.get("from", "")
@@ -142,13 +143,14 @@ def extract_emails_from_mbox(mbox_path: str) -> List[EmailMessage]:
 
         body = extract_body(msg)
         meta = extract_metadata_from_subject(subject)
-
+        md = extract_markdown_sections(body)
         results.append(
             EmailMessage(
                 subject=subject,
                 sender=sender,
                 date=date,
                 body=body,
+                markdown=md,
 
                 pr_numbers=meta["pr_numbers"],
                 repos=meta["repos"],

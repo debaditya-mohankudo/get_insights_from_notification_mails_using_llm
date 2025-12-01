@@ -31,7 +31,7 @@ def normalize(text: str) -> str:
 
 
 def find_exact_matches(query: str) -> List[int]:
-    """Find exact PR/repo/ticket/commit matches from metadata BEFORE FAISS."""
+    """Find exact PR/repo/ticket/commit/markdown matches BEFORE FAISS."""
     
     q = normalize(query)
     matches = []
@@ -73,28 +73,77 @@ def find_exact_matches(query: str) -> List[int]:
             if normalize(email.pr_title) in q:
                 matches.append(i)
                 continue
-        
+
+        # ---- Body text ----
         if email.body:
-            if normalize(email.body) in q:
+            if normalize(query) in normalize(email.body):
                 matches.append(i)
                 continue
+
+        # ---- Markdown sections ----
+        md = getattr(email, "markdown", None)
+        if md:
+
+            # ---- Headings ----
+            if md.get("headings"):
+                if any(normalize(h["title"]) in q for h in md["headings"]):
+                    matches.append(i)
+                    continue
+
+            # ---- Code blocks ----
+            if md.get("code_blocks"):
+                if any(q in normalize(cb) for cb in md["code_blocks"]):
+                    matches.append(i)
+                    continue
+
+            # ---- Bullet lists ----
+            if md.get("lists"):
+                if any(q in normalize(li) for li in md["lists"]):
+                    matches.append(i)
+                    continue
 
     return matches
 
 
 def semantic_search(query: str, k: int = TOP_K) -> List[int]:
     """FAISS semantic search fallback."""
+    # small boost so that code-block queries work better
+    query = query + " markdown code block heading list"
     query_emb = MODEL.encode([query])
     distances, indices = INDEX.search(query_emb, k)
     return indices[0].tolist()
 
 
+# ============================================================
+#       FORMAT RETRIEVED EMAILS INTO LLM CONTEXT CHUNKS
+# ============================================================
+
 def get_email_chunks(indices: List[int]) -> List[str]:
-    """Return formatted text for LLM."""
     chunks = []
 
     for idx in indices:
         email = META[idx]
+        md = getattr(email, "markdown", None)
+
+        # ---- Markdown formatted section ----
+        md_section = ""
+        if md:
+            if md.get("headings"):
+                heads = "\n".join(
+                    [f"  - {'#'*h['level']} {h['title']}" for h in md["headings"]]
+                )
+                md_section += f"\nMarkdown Headings:\n{heads}\n"
+
+            if md.get("code_blocks"):
+                codes = "\n\n".join(
+                    [f"--- code block {i+1} ---\n{cb[:400]}"   # limit size
+                     for i, cb in enumerate(md["code_blocks"])]
+                )
+                md_section += f"\nMarkdown Code Blocks:\n{codes}\n"
+
+            if md.get("lists"):
+                lists = "\n".join([f"  - {li}" for li in md["lists"]])
+                md_section += f"\nMarkdown Lists:\n{lists}\n"
 
         block = f"""
 Subject: {email.subject}
@@ -112,11 +161,10 @@ Commits:
 Files Modified:
 {email.files_modified}
 
-Change Counts:
-{email.change_counts}
+{md_section}
 
 Body:
-{email.body[:2000]}  # limit for safety
+{email.body[:2000]}
 """
         chunks.append(block)
 
@@ -133,7 +181,8 @@ def ask_llm(query: str, chunks: List[str]) -> str:
     prompt = f"""
 You are an expert GitHub PR analyst.
 
-Here are the retrieved email fragments from GitHub notification emails:
+Here are the retrieved email fragments from GitHub notification emails.
+Markdown headings, code blocks, and lists may be included where present.
 
 {'-'*60}
 {chr(10).join(chunks)}

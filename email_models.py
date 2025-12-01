@@ -12,10 +12,22 @@ class EmailMessage:
     repos: Optional[List[str]] = None
     tickets: Optional[List[str]] = None
     pr_title: Optional[str] = None
+    markdown: Optional[Dict] = None
 
     commits: Optional[List[str]] = None
     files_modified: Optional[List[str]] = None
     change_counts: Optional[Dict[str, int]] = None
+    
+    def __post_init__(self):
+        # Normalize commit SHAs to first 7 chars
+        if self.commits:
+            normalized = []
+            for c in self.commits:
+                parts = c.split(" ", 1)
+                sha = parts[0][:7]                # <-- only first 7 chars
+                msg = parts[1] if len(parts) > 1 else ""
+                normalized.append(f"{sha} {msg}".strip())
+            self.commits = normalized
 
     def full_text(self) -> str:
         parts = [self.subject, self.body]
