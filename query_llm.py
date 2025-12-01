@@ -73,6 +73,11 @@ def find_exact_matches(query: str) -> List[int]:
             if normalize(email.pr_title) in q:
                 matches.append(i)
                 continue
+        
+        if email.body:
+            if normalize(email.body) in q:
+                matches.append(i)
+                continue
 
     return matches
 

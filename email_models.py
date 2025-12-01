@@ -40,5 +40,8 @@ class EmailMessage:
 
         if self.change_counts:
             parts.append("Change Counts:\n" + str(self.change_counts))
+        
+        if self.body:
+            parts.append("Body:\n" + self.body[:2000])  # Limit body to first 2000 chars
 
         return "\n\n".join(parts)
