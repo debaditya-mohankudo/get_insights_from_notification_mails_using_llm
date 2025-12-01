@@ -2,54 +2,55 @@ import os
 import re
 import mailbox
 import pickle
-from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 import faiss
 from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
 
-
+from bs4 import BeautifulSoup
 from email_models import EmailMessage
 
+
 # ============================================================
-#                 REGEX DEFINITIONS
+#                 REGEX DEFINITIONS (FIXED)
 # ============================================================
 
-# ---- SUBJECT METADATA ----
-PR_FROM_SUBJECT       = re.compile(r'\(PR\s*#(\d+)\)', re.IGNORECASE)
-REPO_FROM_SUBJECT     = re.compile(r'\[([^\]]+)\]')
-TICKET_FROM_SUBJECT   = re.compile(r'\b([A-Z]+-\d+)\b')
-
-# ---- COMMITS ----
-COMMIT_SIMPLE = re.compile(r'\b([0-9a-f]{7,40})\b(?:\s+(.+))?')
-
-# ---- FILE CHANGES ----
-FILES_GITHUB_PR = re.compile(
-    r'^[\*\-\u2022]?\s*[MAD]\s+([^\s]+)(?:\s+\(\d+\))?',
-    re.MULTILINE
-)
-
-FILES_PATTERN_1 = re.compile(
-    r'(?:(modified|added|removed|deleted|renamed|changed):\s*)([^\s]+)',
+# PR patterns: (#1234), PR #1234, pull request #1234
+PR_FROM_SUBJECT = re.compile(
+    r'(?:PR\s*#|pull request\s*#|#)(\d+)',
     re.IGNORECASE
 )
 
-FILES_PATTERN_2 = re.compile(
-    r'^[MAD]\s+([^\s]+)\s*(?:\(\d+\))?',
+REPO_FROM_SUBJECT = re.compile(r'\[([^\]]+)\]')
+
+TICKET_FROM_SUBJECT = re.compile(r'\b([A-Z]+-\d+)\b')
+
+# Commits (SHA)
+COMMIT_SIMPLE = re.compile(
+    r'^[ \t]*([0-9a-f]{7,40})\b(?:\s+(.+))?',
     re.MULTILINE
 )
 
-FILES_PATTERN_3 = re.compile(
-    r'([^\s]+)\s*->\s*([^\s]+)'
+# FILE CHANGES — FIXED for GitHub email format:
+# "    M path/to/file.php (1)"
+FILE_PATH = re.compile(
+    r'^[ \t]*(?:M|A|D|R\d{1,3})\s+(?:a/|b/)?([A-Za-z0-9_./\-\+]+)',
+    re.MULTILINE
 )
-
-CHANGE_COUNT = re.compile(r'\(([0-9]+)\)')
 
 
 # ============================================================
 #                 EXTRACTION HELPERS
 # ============================================================
+
+def clean_html(html: str) -> str:
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        return soup.get_text("\n")
+    except:
+        return html
+
 
 def extract_metadata_from_subject(subject: str) -> dict:
     repos = REPO_FROM_SUBJECT.findall(subject)
@@ -58,28 +59,20 @@ def extract_metadata_from_subject(subject: str) -> dict:
 
     title = subject
 
-    # Remove repo blocks
-    if repos:
-        for r in repos:
-            title = title.replace(f'[{r}]', '')
+    for r in repos:
+        title = title.replace(f'[{r}]', '')
 
-    # Remove PR numbers
-    if pr_numbers:
-        for p in pr_numbers:
-            title = title.replace(f'(PR #{p})', '')
-            title = title.replace(f'(PR#{p})', '')
+    for p in pr_numbers:
+        title = re.sub(rf'(PR\s*#|pull request\s*#|#){p}', '', title, flags=re.I)
 
-    # Remove tickets
-    if tickets:
-        for t in tickets:
-            title = title.replace(t + '-', '')
-            title = title.replace(t + ' ', '')
+    for t in tickets:
+        title = re.sub(rf'\b{t}[:\-\s]*', '', title)
 
     return {
         "repos": repos or None,
         "pr_numbers": pr_numbers or None,
         "tickets": tickets or None,
-        "pr_title": title.strip(" -_") or None,
+        "pr_title": title.strip(" -:_") or None,
     }
 
 
@@ -92,39 +85,17 @@ def extract_commits(text: str) -> Optional[List[str]]:
     return commits or None
 
 
-def extract_files_modified(text: str) -> Optional[List[str]]:
-    files = set()
+def extract_files_modified(text: str):
+    """EXACT FIX: Handles 'M file.php (1)' and strips '(1)'."""
+    matches = FILE_PATH.findall(text)
 
-    for m in FILES_GITHUB_PR.finditer(text):
-        files.add(m.group(1).strip())
+    cleaned = []
+    for m in matches:
+        # Remove trailing (1), (2), etc.
+        m = re.sub(r'\(\d+\)$', '', m).strip()
+        cleaned.append(m)
 
-    for m in FILES_PATTERN_1.finditer(text):
-        files.add(m.group(2).strip())
-
-    for m in FILES_PATTERN_2.finditer(text):
-        files.add(m.group(1).strip())
-
-    for m in FILES_PATTERN_3.finditer(text):
-        files.add(m.group(1).strip())
-        files.add(m.group(2).strip())
-
-    return list(files) or None
-
-
-def extract_change_counts(text: str) -> Optional[Dict[str, int]]:
-    result = {}
-
-    for line in text.splitlines():
-        m = FILES_GITHUB_PR.search(line) or FILES_PATTERN_2.search(line)
-        if m:
-            path = m.group(1)
-            count = CHANGE_COUNT.search(line)
-            if count:
-                result[path] = int(count.group(1))
-
-    return result or None
-
-
+    return list(set(cleaned)) or None
 
 
 # ============================================================
@@ -137,23 +108,33 @@ def extract_emails_from_mbox(mbox_path: str) -> List[EmailMessage]:
     emails = []
 
     for msg in mbox:
-        subject = msg['subject'] or ""
-        sender = msg['from'] or ""
-        date = msg['date'] or ""
+        subject = msg.get('subject', "")
+        sender = msg.get('from', "")
+        date = msg.get('date', "")
 
+        # Extract body (Prefer text/plain but fallback to HTML)
+        body = ""
         if msg.is_multipart():
-            body = ""
             for part in msg.walk():
-                if part.get_content_type() == "text/plain":
-                    body += part.get_payload(decode=True).decode(errors="ignore")
+                ctype = part.get_content_type()
+                payload = part.get_payload(decode=True)
+
+                if payload is None:
+                    continue
+
+                decoded = payload.decode(errors='ignore') if isinstance(payload, bytes) else str(payload)
+
+                if ctype == "text/plain":
+                    body += decoded
+                elif ctype == "text/html" and not body.strip():
+                    body = clean_html(decoded)
         else:
-            body = msg.get_payload(decode=True).decode(errors="ignore")
+            payload = msg.get_payload(decode=True)
+            body = payload.decode(errors='ignore') if isinstance(payload, bytes) else str(payload)
 
         meta = extract_metadata_from_subject(subject)
-
         commits = extract_commits(body)
         files = extract_files_modified(body)
-        counts = extract_change_counts(body)
 
         emails.append(
             EmailMessage(
@@ -169,7 +150,6 @@ def extract_emails_from_mbox(mbox_path: str) -> List[EmailMessage]:
 
                 commits=commits,
                 files_modified=files,
-                change_counts=counts
             )
         )
 
