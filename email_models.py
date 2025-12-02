@@ -17,7 +17,7 @@ class EmailMessage:
     commits: Optional[List[str]] = None
     files_modified: Optional[List[str]] = None
     change_counts: Optional[Dict[str, int]] = None
-    
+
     def __post_init__(self):
         # Normalize commit SHAs to first 7 chars
         if self.commits:
@@ -55,5 +55,8 @@ class EmailMessage:
         
         if self.body:
             parts.append("Body:\n" + self.body[:2000])  # Limit body to first 2000 chars
+        
+        if self.markdown:
+            parts.append("Markdown Sections:\n" + str(self.markdown))
 
         return "\n\n".join(parts)
