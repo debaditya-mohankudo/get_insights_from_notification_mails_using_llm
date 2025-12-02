@@ -106,6 +106,11 @@ def score_email(query: str, email: EmailMessage) -> float:
     # PR title
     if email.pr_title and email.pr_title.lower() in q:
         score += 5
+    
+    if email.tags:
+        for tag in email.tags:
+            if tag.lower() in q:
+                score += 2
 
     return score
 
@@ -129,6 +134,8 @@ def build_context(emails: List[EmailMessage]) -> str:
 
     for e in emails:
         block = []
+        if e.tags:
+            block.append("Tags:\n" + ", ".join(e.tags))
 
         if e.pr_numbers:
             block.append(f"PR Numbers: {e.pr_numbers}")
@@ -151,6 +158,9 @@ def build_context(emails: List[EmailMessage]) -> str:
         # include markdown extracted content
         if e.markdown:
             block.append("Markdown Sections:\n" + "\n".join(e.markdown))
+        
+        if e.tags:
+            block.append("Tags:\n" + ", ".join(e.tags))
 
         # trimmed email body
         body_preview = e.body[:2000]
