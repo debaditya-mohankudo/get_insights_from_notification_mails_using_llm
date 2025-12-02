@@ -13,6 +13,8 @@ class EmailMessage:
     tickets: Optional[List[str]] = None
     pr_title: Optional[str] = None
     markdown: Optional[Dict] = None
+    tags: Optional[List[str]] = None
+
 
     commits: Optional[List[str]] = None
     files_modified: Optional[List[str]] = None
@@ -58,5 +60,8 @@ class EmailMessage:
         
         if self.markdown:
             parts.append("Markdown Sections:\n" + str(self.markdown))
+        
+        if self.tags:
+            parts.append("Tags:\n" + ", ".join(self.tags))
 
         return "\n\n".join(parts)

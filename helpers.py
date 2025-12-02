@@ -248,3 +248,60 @@ def extract_files_modified(text: str) -> Optional[List[str]]:
     ]
 
     return list(set(cleaned)) or None
+
+def generate_tags_from_pr_title(pr_title: str):
+    """
+    Generate classification tags based on keywords found in a PR title.
+
+    Rules:
+      - If "bug" or "fix" → add ["bug", "fix"]
+      - If "sql" / "table" / "database" / "db" → add ["sql", "database"]
+      - If "ui" → add ["ui"]
+      - If "api" → add ["api"]
+      - If "performance" → add ["performance"]
+      - If "security" / "vulnerability" → add ["security"]
+      - If "refactor" / "cleanup" → add ["refactor"]
+      - If "auth" / "login" / "oauth" → add ["authentication", "auth"]
+
+    Returns:
+        List[str] of unique tags.
+    """
+    if not pr_title:
+        return []
+
+    title = pr_title.lower()
+    tags = []
+
+    # bug / fix detection
+    if "bug" in title or "fix" in title:
+        tags.extend(["bug", "fix"])
+
+    # database related
+    if any(word in title for word in ["sql", "table", "database", "db"]):
+        tags.extend(["sql", "database"])
+
+    # ui
+    if "ui" in title:
+        tags.append("ui")
+
+    # api
+    if "api" in title:
+        tags.append("api")
+
+    # performance
+    if "performance" in title:
+        tags.append("performance")
+    
+    # security
+    if "security" in title or "vulnerability" in title:
+        tags.append("security")
+    
+    # refactor / cleanup
+    if "refactor" in title or "cleanup" in title:
+        tags.append("refactor")
+    
+    # authentication
+    if any(word in title for word in ["auth", "login", "oauth"]):
+        tags.extend(["authentication", "auth"])
+
+    return list(set(tags))  # remove duplicates
