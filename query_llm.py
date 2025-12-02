@@ -20,6 +20,11 @@ index = faiss.read_index("index.faiss")
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
+import pickle
+
+with open("meta.pkl", "rb") as f:
+    META = pickle.load(f)
+
 # ============================================================
 #                 QUERY CLASSIFICATION HELPERS
 # ============================================================
@@ -163,8 +168,8 @@ def build_context(emails: List[EmailMessage]) -> str:
             block.append("Tags:\n" + ", ".join(e.tags))
 
         # trimmed email body
-        body_preview = e.body[:2000]
-        block.append("Email Body:\n" + body_preview)
+        #body_preview = e.body[:2000]
+        #block.append("Email Body:\n" + body_preview)
 
         parts.append("\n\n".join(block))
 
@@ -205,7 +210,7 @@ def answer_query(query: str):
         print(f"[PR mode activated → PR #{pr}]")
 
         # Filter emails strictly by PR
-        emails = [e for e in META if e.pr_numbers and pr in e.pr_numbers]
+        emails = [e for e in META if e.pr_numbers and pr in  e.pr_numbers]
 
         if not emails:
             print("No emails found for this PR.")

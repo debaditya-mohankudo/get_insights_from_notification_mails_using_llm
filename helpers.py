@@ -305,3 +305,13 @@ def generate_tags_from_pr_title(pr_title: str):
         tags.extend(["authentication", "auth"])
 
     return list(set(tags))  # remove duplicates
+
+
+def extract_pr_from_message_id(msgid: str) -> int | None:
+    if not msgid:
+        return None
+    PR_MSGID_RE = re.compile(r"/pull/(\d+)/")
+    m = PR_MSGID_RE.search(msgid)
+    if m:
+        return int(m.group(1))
+    return None
