@@ -112,7 +112,14 @@ class EmailMessage(BaseModel):
             parts.append(f"Tickets: {', '.join(self.tickets)}")
 
         if self.markdown:
-            parts.append("\n".join(self.markdown))
+            md_parts = []
+            for section, items in self.markdown.items():
+                if items:
+                    md_parts.append(f"## {section}")
+                    md_parts.extend(f"- {i}" for i in items)
+            if md_parts:
+                parts.append("Markdown Sections:\n" + "\n".join(md_parts))
+
 
         if self.commits:
             parts.append("\n".join(self.commits))

@@ -2,7 +2,7 @@ import pickle
 import sys
 import faiss
 from sentence_transformers import SentenceTransformer
-from typing import List, Optional, Tuple
+from typing import List, Optional
 import ollama
 import re
 
@@ -20,11 +20,6 @@ index = faiss.read_index("index.faiss")
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
-import pickle
-
-with open("meta.pkl", "rb") as f:
-    META = pickle.load(f)
-
 # ============================================================
 #                 QUERY CLASSIFICATION HELPERS
 # ============================================================
@@ -33,35 +28,29 @@ COMMIT_REGEX = r"\b[a-f0-9]{7,40}\b"
 
 
 def extract_commit_hash(query: str) -> Optional[str]:
-    """Extract commit hash-like tokens."""
     q = query.lower()
     m = re.search(COMMIT_REGEX, q)
-    if m:
-        return m.group(0)
-    return None
+    return m.group(0) if m else None
 
 
 def extract_pr_number(query: str) -> Optional[int]:
     """
-    Extract PR number *only* when the query explicitly mentions PR.
-    Prevent false activation when query contains commit-like tokens.
+    Extract PR number only when explicitly mentioned.
+    Avoid false activation when query contains commit-like hashes.
     """
-
     q = query.lower()
 
-    # If query contains any commit hash, do NOT activate PR mode.
     if re.search(COMMIT_REGEX, q):
         return None
 
-    # Explicit PR-only patterns
-    pr_patterns = [
+    patterns = [
         r"pr\s*#\s*(\d+)",
         r"pull\s*request\s*#\s*(\d+)",
         r"pull\s*#\s*(\d+)",
         r"\bpr\s+(\d+)\b",
     ]
 
-    for pat in pr_patterns:
+    for pat in patterns:
         m = re.search(pat, q)
         if m:
             return int(m.group(1))
@@ -74,44 +63,37 @@ def extract_pr_number(query: str) -> Optional[int]:
 # ============================================================
 
 def score_email(query: str, email: EmailMessage) -> float:
-    """Weighted exact match scoring."""
     q = query.lower()
     score = 0.0
 
-    # PR numbers
     if email.pr_numbers:
         for pr in email.pr_numbers:
             if str(pr) in q:
                 score += 6
 
-    # Repo names
     if email.repos:
         for r in email.repos:
             if r.lower() in q:
                 score += 3
 
-    # Tickets
     if email.tickets:
         for t in email.tickets:
             if t.lower() in q:
                 score += 2
 
-    # Commits (7-char abbreviated)
     if email.commits:
         for c in email.commits:
             if c.lower() in q:
                 score += 4
 
-    # File paths
     if email.files_modified:
         for path in email.files_modified:
             if path.lower() in q:
                 score += 4
 
-    # PR title
     if email.pr_title and email.pr_title.lower() in q:
         score += 5
-    
+
     if email.tags:
         for tag in email.tags:
             if tag.lower() in q:
@@ -121,8 +103,26 @@ def score_email(query: str, email: EmailMessage) -> float:
 
 
 # ============================================================
-#                 QUERY → VECTOR SEARCH
+#                 SEMANTIC SEARCH + TAG RERANK
 # ============================================================
+
+def rerank_by_tags(query: str, emails: List[EmailMessage]) -> List[EmailMessage]:
+    """
+    Boost emails that have tags matching words in the query.
+    Only affects semantic mode (NOT PR mode, NOT commit mode).
+    """
+    q = query.lower()
+
+    for e in emails:
+        boost = 0
+        if e.tags:
+            for t in e.tags:
+                if t.lower() in q:
+                    boost += 3  # Adjust this weight as needed
+        e._tag_boost = boost
+
+    return sorted(emails, key=lambda x: x._tag_boost, reverse=True)
+
 
 def search_semantic(query: str, top_k: int = 10) -> List[int]:
     vec = model.encode([query])
@@ -139,8 +139,9 @@ def build_context(emails: List[EmailMessage]) -> str:
 
     for e in emails:
         block = []
+
         if e.tags:
-            block.append("Tags:\n" + ", ".join(e.tags))
+            block.append(f"Tags: {', '.join(e.tags)}")
 
         if e.pr_numbers:
             block.append(f"PR Numbers: {e.pr_numbers}")
@@ -160,16 +161,16 @@ def build_context(emails: List[EmailMessage]) -> str:
         if e.files_modified:
             block.append("Files Changed:\n" + "\n".join(f"- {c}" for c in e.files_modified))
 
-        # include markdown extracted content
         if e.markdown:
-            block.append("Markdown Sections:\n" + "\n".join(e.markdown))
-        
-        if e.tags:
-            block.append("Tags:\n" + ", ".join(e.tags))
+            md_parts = []
+            for section, items in e.markdown.items():
+                if items:
+                    md_parts.append(f"## {section}")
+                    md_parts.extend(f"- {i}" for i in items)
+            if md_parts:
+                block.append("Markdown Sections:\n" + "\n".join(md_parts))
 
-        # trimmed email body
-        #body_preview = e.body[:2000]
-        #block.append("Email Body:\n" + body_preview)
+        block.append("Email Body:\n" + e.body)
 
         parts.append("\n\n".join(block))
 
@@ -183,14 +184,12 @@ def build_context(emails: List[EmailMessage]) -> str:
 def answer_query(query: str):
     query = query.strip()
 
-    # 1️⃣ Detect commit-only mode
+    # 1️⃣ Commit mode
     commit = extract_commit_hash(query)
     if commit:
         print(f"[Commit mode → commit {commit}]")
 
-        # Retrieve all emails referencing this commit
         matched = [e for e in META if e.commits and any(commit in c for c in e.commits)]
-
         if not matched:
             print("No emails found for this commit.")
             return
@@ -198,26 +197,23 @@ def answer_query(query: str):
         context = build_context(matched)
         response = ollama.generate(
             model="llama3.2:3b",
-            prompt=f"You are an expert summarizer.\nSummarize details about commit {commit} using the following context only.\n\n{context}"
+            prompt=f"You are an expert summarizer.\nSummarize details about commit {commit} using ONLY the context below.\n\n{context}"
         )
-
         print(response["response"])
         return
 
-    # 2️⃣ Detect PR mode safely
+    # 2️⃣ PR mode
     pr = extract_pr_number(query)
     if pr:
         print(f"[PR mode activated → PR #{pr}]")
 
-        # Filter emails strictly by PR
-        emails = [e for e in META if e.pr_numbers and pr in  e.pr_numbers]
-
+        emails = [e for e in META if e.pr_numbers and pr in e.pr_numbers]
         if not emails:
             print("No emails found for this PR.")
             return
 
+        # NO tag reranking here — you requested PR mode should NOT be modified
         context = build_context(emails)
-
         response = ollama.generate(
             model="llama3.2:3b",
             prompt=f"You are an expert PR analyst.\nSummarize PR #{pr} using ONLY the context below.\n\n{context}"
@@ -225,15 +221,17 @@ def answer_query(query: str):
         print(response["response"])
         return
 
-    # 3️⃣ Normal semantic search mode
+    # 3️⃣ Semantic mode
     print("[Semantic mode → no PR/commit detected]")
 
-    emb = model.encode([query])
-    _, idx = index.search(emb, 5)
+    vec = model.encode([query])
+    _, idx = index.search(vec, 5)
     selected = [META[i] for i in idx[0]]
 
-    context = build_context(selected)
+    # 🔥 Apply tag reranking ONLY in semantic search
+    selected = rerank_by_tags(query, selected)
 
+    context = build_context(selected)
     response = ollama.generate(
         model="llama3.2:3b",
         prompt=f"You are an expert summarizer.\nAnswer using ONLY the context below.\n\n{context}"

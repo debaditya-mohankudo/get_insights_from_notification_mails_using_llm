@@ -53,7 +53,6 @@ def extract_lists(text: str) -> Optional[List[str]]:
     """
     Extract bullet or numbered list lines from markdown.
     """
-    matches = LIST_RE.findall(text)
     lines = LIST_RE.findall(text)
     
     if not lines:
