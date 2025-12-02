@@ -34,7 +34,7 @@ PR_FROM_SUBJECT = re.compile(
 #   "[fuzzycert/fuzzycert_codecops]"
 REPO_FROM_SUBJECT = re.compile(r'\[([^\]]+)\]')
 
-# Ticket identifiers such as "DIGI-2044" or "CC-5521"
+# Ticket identifiers such as "FIZZY-2044" or "XY-12345"
 TICKET_FROM_SUBJECT = re.compile(r'\b([A-Z]+-\d+)\b')
 
 # Commit lines in text/plain emails.
