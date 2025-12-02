@@ -1,3 +1,5 @@
+(Auto-generated)
+
 Sure! Here is a **clean, production-ready README.md** for your GitHub repo, based entirely on your project files.
 
 If you want, I can also generate a **diagram**, **architecture image**, or **flowchart** afterward.
@@ -101,14 +103,14 @@ meta.pkl
 Use natural language:
 
 ```bash
-python query_llm.py "pr #8040 commits and file changes"
+python query_llm.py "pr #1234 commits and file changes"
 ```
 
 The query engine:
 
 ### Step 1 — Extract PR number
 
-Example: `"8040"`
+Example: `"1234"`
 
 ### Step 2 — Weighted exact match
 
@@ -116,7 +118,7 @@ Scores PR numbers, repos, tickets, commits, file paths, and PR title.
 
 ### Step 3 — Strict PR filter
 
-Ensures **only emails belonging to PR 8040** are considered.
+Ensures **only emails belonging to PR 1234** are considered.
 
 ### Step 4 — Semantic search fallback
 
@@ -155,7 +157,7 @@ The LLM is instructed to:
 [Exact-match retrieval → 5 results]
 
 ==================================================
-PR 8040 Summary:
+PR 1234 Summary:
 - 5 commits
 - 3 files modified
 - Fixes on purchase history UI
@@ -239,3 +241,4 @@ If you'd like, I can also generate:
 ✅ A **flowchart**
 ✅ A **demo GIF**
 Just tell me which one.
+
