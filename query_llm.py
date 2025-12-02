@@ -109,20 +109,27 @@ def score_email(query: str, email: EmailMessage) -> float:
 def rerank_by_tags(query: str, emails: List[EmailMessage]) -> List[EmailMessage]:
     """
     Boost emails that have tags matching words in the query.
-    Only affects semantic mode (NOT PR mode, NOT commit mode).
+    This version does NOT modify EmailMessage objects.
+    It computes boost scores externally and sorts by them.
     """
     q = query.lower()
 
-    for e in emails:
+    def compute_boost(email: EmailMessage) -> int:
+        if not email.tags:
+            return 0
+
         boost = 0
-        if e.tags:
-            for t in e.tags:
-                if t.lower() in q:
-                    boost += 3  # Adjust this weight as needed
-        e._tag_boost = boost
+        for t in email.tags:
+            if t.lower() in q:
+                boost += 3
+        return boost
 
-    return sorted(emails, key=lambda x: x._tag_boost, reverse=True)
-
+    # Sort using computed boost (highest first)
+    return sorted(
+        emails,
+        key=lambda e: compute_boost(e),
+        reverse=True
+    )
 
 def search_semantic(query: str, top_k: int = 10) -> List[int]:
     vec = model.encode([query])

@@ -315,3 +315,16 @@ def extract_pr_from_message_id(msgid: str) -> int | None:
     if m:
         return int(m.group(1))
     return None
+
+def extract_prs_from_body_links(body: str) -> list[int]:
+    if not body:
+        return []
+    PR_LINK_RE = re.compile(r"https?://github\.com/[^/]+/[^/]+/pull/(\d+)", re.IGNORECASE)
+    matches = PR_LINK_RE.findall(body)
+    return [int(m) for m in matches]
+
+def extract_tickets_from_body(body: str) -> list[str]:
+    if not body:
+        return []
+    TICKET_BODY_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,10}-\d{1,6})\b")
+    return TICKET_BODY_RE.findall(body)

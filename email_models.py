@@ -35,6 +35,8 @@ class EmailMessage(BaseModel):
     # Additional attributes
     # --------------------------
     tags: Optional[List[str]] = None
+    linked_prs: Optional[List[int]] = None
+    linked_tickets: Optional[List[str]] = None
 
     # ============================================================
     # FIELD-LEVEL VALIDATORS (v2)
@@ -99,11 +101,14 @@ class EmailMessage(BaseModel):
         """
         parts = []
 
+        if self.tags:
+            parts.append(f"Tags: {', '.join(self.tags)}")
+
         if self.pr_title:
             parts.append(f"Title: {self.pr_title}")
 
         if self.pr_numbers:
-            parts.append(f"PR Numbers: {', '.join(map(str, self.pr_numbers))}")
+            parts.append(f"PR Numbers: {', '.join(map(str, list(set(self.pr_numbers))))}")
 
         if self.repos:
             parts.append(f"Repos: {', '.join(self.repos)}")
@@ -126,9 +131,12 @@ class EmailMessage(BaseModel):
 
         if self.files_modified:
             parts.append("\n".join(self.files_modified))
-        
-        if self.tags:
-            parts.append(f"Tags: {', '.join(self.tags)}")
+
+        if self.linked_prs:
+            parts.append(f"Linked PRs: {', '.join(map(str, self.linked_prs))}")
+
+        if self.linked_tickets:
+            parts.append(f"Linked Tickets: {', '.join(self.linked_tickets)}")
 
         parts.append(self.body)
 
