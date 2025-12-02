@@ -11,158 +11,9 @@ from sentence_transformers import SentenceTransformer
 from bs4 import BeautifulSoup
 
 from email_models import EmailMessage
+from extract_emails_from_mbox import EmailExtractor
+from helpers import clean_html, extract_metadata_from_subject, extract_commits, extract_files_modified
 from markdown_sections import extract_markdown_sections
-
-
-# ============================================================
-#                 REGEX DEFINITIONS
-# ============================================================
-
-PR_FROM_SUBJECT = re.compile(r'(?:PR\s*#|pull request\s*#|#)(\d+)', re.IGNORECASE)
-REPO_FROM_SUBJECT = re.compile(r'\[([^\]]+)\]')
-TICKET_FROM_SUBJECT = re.compile(r'\b([A-Z]+-\d+)\b')
-
-COMMIT_SIMPLE = re.compile(
-    r'^[ \t]*([0-9a-f]{7,40})\b(?:\s+(.+))?',
-    re.MULTILINE
-)
-
-FILE_PATH = re.compile(
-    r'^[ \t]*(?:M|A|D|R\d{1,3})\s+(?:a/|b/)?([A-Za-z0-9_./\-\+]+)',
-    re.MULTILINE
-)
-
-
-# ============================================================
-#                 EXTRACTION HELPERS
-# ============================================================
-
-def clean_html(html: str) -> str:
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        return soup.get_text("\n", strip=True)
-    except Exception:
-        return html
-
-
-def extract_metadata_from_subject(subject: str) -> dict:
-    repos = REPO_FROM_SUBJECT.findall(subject)
-    pr_numbers = PR_FROM_SUBJECT.findall(subject)
-    tickets = TICKET_FROM_SUBJECT.findall(subject)
-
-    # Clean PR title
-    clean_title = subject
-    for r in repos:
-        clean_title = clean_title.replace(f'[{r}]', '')
-
-    for p in pr_numbers:
-        clean_title = re.sub(rf'(PR\s*#|pull request\s*#|#){p}', '', clean_title, flags=re.I)
-
-    for t in tickets:
-        clean_title = re.sub(rf'\b{t}[:\-\s]*', '', clean_title)
-
-    return {
-        "repos": repos or None,
-        "pr_numbers": pr_numbers or None,
-        "tickets": tickets or None,
-        "pr_title": clean_title.strip(" -:_") or None,
-    }
-
-
-def extract_commits(text: str) -> Optional[List[str]]:
-    commits = [
-        f"{m.group(1)} {m.group(2) or ''}".strip()
-        for m in COMMIT_SIMPLE.finditer(text)
-    ]
-    return commits or None
-
-
-def extract_files_modified(text: str) -> Optional[List[str]]:
-    raw_matches = FILE_PATH.findall(text)
-    cleaned = [
-        re.sub(r'\(\d+\)$', '', m).strip()
-        for m in raw_matches
-    ]
-    return list(set(cleaned)) or None
-
-
-# ============================================================
-#                 EMAIL BODY EXTRACTOR
-# ============================================================
-
-def extract_body(msg) -> str:
-    """
-    Extract best body:
-    - Prefer text/plain
-    - Fallback to stripped HTML
-    """
-    if not msg.is_multipart():
-        payload = msg.get_payload(decode=True)
-        if isinstance(payload, bytes):
-            return payload.decode(errors='ignore')
-        return str(payload)
-
-    plain, html = [], []
-
-    for part in msg.walk():
-        ctype = part.get_content_type()
-        payload = part.get_payload(decode=True)
-        if payload is None:
-            continue
-
-        decoded = payload.decode(errors='ignore') if isinstance(payload, bytes) else str(payload)
-
-        if ctype == "text/plain":
-            plain.append(decoded)
-        elif ctype == "text/html":
-            html.append(clean_html(decoded))
-
-    if plain:
-        return "\n".join(plain)
-
-    if html:
-        return "\n".join(html)
-
-    return ""
-
-
-# ============================================================
-#                 EMAIL EXTRACTION
-# ============================================================
-
-def extract_emails_from_mbox(mbox_path: str) -> List[EmailMessage]:
-    print(f"📦 Parsing: {mbox_path}")
-
-    mbox = mailbox.mbox(mbox_path)
-    results = []
-    
-    for msg in tqdm(mbox, desc="Extracting emails"):
-        subject = msg.get("subject", "")
-        sender = msg.get("from", "")
-        date = msg.get("date", "")
-
-        body = extract_body(msg)
-        meta = extract_metadata_from_subject(subject)
-        md = extract_markdown_sections(body)
-        results.append(
-            EmailMessage(
-                subject=subject,
-                sender=sender,
-                date=date,
-                body=body,
-                markdown=md,
-
-                pr_numbers=meta["pr_numbers"],
-                repos=meta["repos"],
-                tickets=meta["tickets"],
-                pr_title=meta["pr_title"],
-
-                commits=extract_commits(body),
-                files_modified=extract_files_modified(body),
-            )
-        )
-
-    return results
 
 
 # ============================================================
@@ -205,7 +56,9 @@ if __name__ == "__main__":
         if item.suffix == ".mbox":
             mbox_path = item / "mbox"
             if mbox_path.exists():
-                emails.extend(extract_emails_from_mbox(str(mbox_path)))
+                extractor = EmailExtractor()
+                emails.extend(extractor.extract_emails_from_mbox(str(mbox_path)))
+
 
     print(f"📨 Total emails collected: {len(emails)}")
 
