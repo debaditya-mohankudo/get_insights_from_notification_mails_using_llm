@@ -1,33 +1,55 @@
 import os
-import re
-import mailbox
 import pickle
 from pathlib import Path
-from typing import List, Optional
+from typing import List
+import multiprocessing
 
 import faiss
 from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
-from bs4 import BeautifulSoup
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
 
 from email_models import EmailMessage
 from extract_emails_from_mbox import EmailExtractor
-from helpers import clean_html, extract_metadata_from_subject, extract_commits, extract_files_modified
-from markdown_sections import extract_markdown_sections
 
 
 # ============================================================
-#               INDEX BUILDER
+#               WORKER FUNCTION (MULTIPROCESS SAFE)
 # ============================================================
 
-def embed_and_index(emails: List[EmailMessage], index_path="index.faiss", meta_path="meta.pkl"):
+def process_single_mbox(path: str) -> List[EmailMessage]:
+    """
+    Extracts emails from a single mbox file.
+    Runs inside a separate worker process (fork safe on macOS).
+    """
+    extractor = EmailExtractor()
+    return extractor.extract_emails_from_mbox(path)
+
+
+# ============================================================
+#               EMBEDDING + INDEX CREATION
+# ============================================================
+
+def embed_and_index(
+    emails: List[EmailMessage],
+    index_path="index.faiss",
+    meta_path="meta.pkl"
+):
+    print("🔢 Generating embeddings...")
     model = SentenceTransformer("all-MiniLM-L6-v2")
 
     texts = [email.full_text() for email in emails]
-    embeddings = model.encode(texts, batch_size=32, show_progress_bar=True)
+
+    embeddings = model.encode(
+        texts,
+        batch_size=32,
+        show_progress_bar=True
+    )
 
     dim = embeddings.shape[1]
 
+    print("📦 Creating FAISS index...")
     index = faiss.IndexHNSWFlat(dim, 32)
     index.hnsw.efSearch = 64
     index.hnsw.efConstruction = 200
@@ -38,28 +60,47 @@ def embed_and_index(emails: List[EmailMessage], index_path="index.faiss", meta_p
     with open(meta_path, "wb") as f:
         pickle.dump(emails, f)
 
-    print(f"✔ FAISS index saved: {index_path}")
-    print(f"✔ Metadata saved: {meta_path}")
+    print(f"✔ FAISS index saved to: {index_path}")
+    print(f"✔ Metadata saved to: {meta_path}")
 
 
 # ============================================================
-#               MAIN EXECUTION
+#               MAIN EXECUTION (PARALLEL + FORK MODE)
 # ============================================================
 
 if __name__ == "__main__":
+    # Fix macOS semaphore leak warnings
+    multiprocessing.set_start_method("fork")
+
     ROOT = Path("/Users/debaditya/workspace/trash_mails")
 
-    emails: List[EmailMessage] = []
-
+    # Collect all .mbox/mbox files
+    mbox_files = []
     for item in ROOT.iterdir():
-        # Only parse folder/*.mbox/mbox
         if item.suffix == ".mbox":
             mbox_path = item / "mbox"
             if mbox_path.exists():
-                extractor = EmailExtractor()
-                emails.extend(extractor.extract_emails_from_mbox(str(mbox_path)))
+                mbox_files.append(str(mbox_path))
 
+    print(f"📦 Total mbox files discovered: {len(mbox_files)}")
 
-    print(f"📨 Total emails collected: {len(emails)}")
+    # --------------------------------------------------------
+    # PARALLEL EXTRACTION WITH ProcessPoolExecutor
+    # --------------------------------------------------------
+    print("⚡ Extracting emails in parallel...")
 
+    emails: List[EmailMessage] = []
+
+    with ProcessPoolExecutor(max_workers=cpu_count()) as executor:
+        futures = {executor.submit(process_single_mbox, path): path for path in mbox_files}
+
+        for future in tqdm(as_completed(futures), total=len(futures)):
+            batch = future.result()
+            emails.extend(batch)
+
+    print(f"📨 Total emails extracted: {len(emails)}")
+
+    # --------------------------------------------------------
+    # EMBEDDINGS + INDEX
+    # --------------------------------------------------------
     embed_and_index(emails)
