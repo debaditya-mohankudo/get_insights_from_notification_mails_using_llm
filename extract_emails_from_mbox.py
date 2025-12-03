@@ -4,7 +4,7 @@
 
 from typing import List
 from email_models import EmailMessage
-from markdown_sections import extract_markdown_sections
+from markdown_sections import extract_heading_sections_with_content, extract_markdown_sections
 from helpers import (
     extract_metadata_from_subject,
     extract_commits,
@@ -13,7 +13,8 @@ from helpers import (
     extract_pr_from_message_id,
 )
 import mailbox
-
+from tag_classifier import classify_tags
+from tags_from_file import classify_tags_from_files
 class EmailExtractor:
     def extract_emails_from_mbox(self, mbox_path: str) -> List[EmailMessage]:
         """Fast, allocation-optimized mbox → EmailMessage parser."""
@@ -29,6 +30,8 @@ class EmailExtractor:
         _extract_commits = extract_commits
         _extract_files = extract_files_modified
         _extract_pr_from_msgid = extract_pr_from_message_id
+        _classify_tags = classify_tags
+        _classify_tags_from_files = classify_tags_from_files
 
         EmailMsg = EmailMessage
 
@@ -55,14 +58,26 @@ class EmailExtractor:
             pr_numbers = pr_subject_list or []
             if pr_from_msgid and pr_from_msgid not in pr_numbers:
                 pr_numbers.append(pr_from_msgid)
+            pr_numbers = [int(p) for p in pr_numbers] if pr_numbers else None
+            pr_numbers = list(set(pr_numbers)) if pr_numbers else None
 
+            files_modified = _extract_files(body)
+            markdown_sections = _extract_md(body)
+            sections = extract_heading_sections_with_content(body)
+
+            tags_from_title = _classify_tags(meta["pr_title"])
+            tags_from_files = _classify_tags_from_files(files_modified or [])
+            tags_from_section = _classify_tags(','.join(','.join(s[1]) for s in sections))
+
+            combined_tags = sorted(set(tags_from_title) | set(tags_from_files) | set(tags_from_section))
+            if  pr_numbers is not None:
+                print(tags_from_section, sections, pr_numbers)
             # -----------------------------
             #  Build EmailMessage object
             # -----------------------------
             append(
                 EmailMsg(
                     subject=subject,
-                    sender=sender,
                     date=date,
 
                     message_id=message_id,     # NEW FIELD
@@ -71,12 +86,13 @@ class EmailExtractor:
                     repos=meta["repos"],
                     tickets=meta["tickets"],
                     pr_title=meta["pr_title"],
+                    tags=combined_tags,
 
                     body=body,
-                    markdown= _extract_md(body),
+                    markdown= markdown_sections,
 
                     commits=_extract_commits(body),
-                    files_modified=_extract_files(body),
+                    files_modified=files_modified,
                 )
             )
 
