@@ -16,6 +16,13 @@ HEADING_RE = re.compile(
     re.MULTILINE
 )
 
+# NEW: Support GitHub email plain-text headings
+PLAIN_HEADING_RE = re.compile(
+    r"^(Commit Summary|File Changes|What changed\?|What changed|Summary|"
+    r"Implementation Details|Implementation|Testing Notes|Changelog|Description)\s*(?:\(.+\))?$",
+    re.IGNORECASE | re.MULTILINE
+)
+
 LIST_RE = re.compile(
     r"^[ \t]*([-*+]|\d+\.)\s+.+$",
     re.MULTILINE
@@ -34,19 +41,56 @@ def extract_code_blocks(text: str) -> Optional[List[str]]:
     return [b.strip() for b in blocks] or None
 
 
-def extract_headings(text: str) -> Optional[List[Dict[str, str]]]:
+def extract_heading_sections_with_content(text: str):
     """
-    Returns headings with their levels.
-    Example: { "level": 2, "title": "Installation" }
-    """
-    matches = HEADING_RE.findall(text)
-    if not matches:
-        return None
+    Extracts sections of the form:
+        [
+            ("Heading 1", [line1, line2, ...]),
+            ("Heading 2", [...]),
+            (None, [...])   # text before first heading
+        ]
 
-    return [
-        {"level": str(len(h[0])), "title": h[1].strip()}
-        for h in matches
-    ]
+    Uses both markdown (# ## ###) and plain GitHub headings
+    that your enhanced PLAIN_HEADING_RE detects.
+    """
+
+    sections = []
+    current_heading = None
+    current_lines = []
+
+    # iterate line-by-line
+    for line in text.splitlines():
+        raw = line.rstrip()
+        if not raw.strip():
+            continue
+
+        # markdown-style heading
+        m = HEADING_RE.match(raw)
+        if m:
+            # save previous
+            if current_heading is not None or current_lines:
+                sections.append((current_heading, current_lines))
+            current_heading = m.group(2).strip()
+            current_lines = []
+            continue
+
+        # plain-text GitHub heading
+        m2 = PLAIN_HEADING_RE.match(raw)
+        if m2:
+            if current_heading is not None or current_lines:
+                sections.append((current_heading, current_lines))
+            current_heading = m2.group(1).strip()
+            current_lines = []
+            continue
+
+        # normal content line
+        current_lines.append(raw)
+
+    # add last section
+    if current_heading is not None or current_lines:
+        sections.append((current_heading, current_lines))
+
+    return sections
 
 
 def extract_lists(text: str) -> Optional[List[str]]:
@@ -80,6 +124,7 @@ def extract_markdown_sections(text: str) -> Dict[str, Optional[List]]:
     """
     return {
         "code_blocks": extract_code_blocks(text),
-        "headings": extract_headings(text),
+        "headings": extract_heading_sections_with_content(text),
         "lists": extract_lists(text),
     }
+
