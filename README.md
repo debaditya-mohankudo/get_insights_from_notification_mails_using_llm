@@ -1,6 +1,10 @@
 (Auto-generated)
 
-
+# Keywords
+-  **local LLM** (Ollama).
+-  **searchable vector database**
+-  **FAISS HNSW**
+-  **GitHub notification emails**
 ---
 
 # 📘 **README.md — GitHub Notification Email Insight Engine**
@@ -32,19 +36,6 @@ It is fully offline, fast, and optimized for PR-specific retrieval.
 * Returns commit summaries, file changes, PR description, etc.
 
 ---
-
-# 🧱 Project Structure
-
-```
-.
-├── build_index.py           # Parse emails, extract metadata, build FAISS index
-├── query_llm.py             # Query engine + LLM orchestration
-├── email_models.py          # EmailMessage dataclass (commit truncation, full text)
-├── markdown_sections.py     # Markdown extraction utilities
-├── index.faiss              # Generated vector index
-├── meta.pkl                 # Serialized EmailMessage objects
-└── *.mbox/mbox              # Raw exported GitHub Apple Mail folders
-```
 
 ---
 
@@ -142,7 +133,7 @@ ollama.generate(model="llama3.2:3b")
 
 The LLM is instructed to:
 
-* Answer **only about the exact PR**
+* Answer **only about the exact PR** if it finds pr #number
 * Use only retrieved email fragments
 * Avoid hallucination
 
@@ -196,19 +187,9 @@ Reduces hallucination significantly.
 * BeautifulSoup4
 * tqdm
 * Ollama (for local LLM)
+* pytest
 
-Install:
 
-```bash
-pip install faiss-cpu sentence-transformers beautifulsoup4 tqdm
-```
-
-You must also have:
-
-```bash
-brew install ollama
-ollama pull llama3.2:3b
-```
 
 ---
 
