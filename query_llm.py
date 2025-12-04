@@ -6,7 +6,7 @@ from typing import List, Optional
 import ollama
 import re
 
-from email_models import EmailMessage
+from _internal.email_models import EmailMessage
 
 
 # ============================================================
