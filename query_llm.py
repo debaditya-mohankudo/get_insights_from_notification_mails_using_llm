@@ -12,11 +12,11 @@ from _internal.email_models import EmailMessage
 # ============================================================
 #                    LOAD INDEX + METADATA
 # ============================================================
-
-with open("meta.pkl", "rb") as f:
+INDEX_DIR = "index_data"
+with open(f"{INDEX_DIR}/meta.pkl", "rb") as f:
     META: List[EmailMessage] = pickle.load(f)
 
-index = faiss.read_index("index.faiss")
+index = faiss.read_index(f"{INDEX_DIR}/index.faiss")
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
@@ -99,6 +99,11 @@ def score_email(query: str, email: EmailMessage) -> float:
             if tag.lower() in q:
                 score += 2
 
+    if email.contributors:
+        for contributor in email.contributors:
+            if contributor.lower() in q:
+                score += 2
+
     return score
 
 
@@ -177,6 +182,9 @@ def build_context(emails: List[EmailMessage]) -> str:
             if md_parts:
                 block.append("Markdown Sections:\n" + "\n".join(md_parts))
 
+        if e.contributors:
+            block.append(f"Contributors: {', '.join(e.contributors)}")
+
         block.append("Email Body:\n" + e.body)
 
         parts.append("\n\n".join(block))
@@ -222,7 +230,7 @@ def answer_query(query: str):
         # NO tag reranking here — you requested PR mode should NOT be modified
         context = build_context(emails)
         response = ollama.generate(
-            model="llama3.2:3b",
+            model="llama3.1",
             prompt=f"You are an expert PR analyst.\nSummarize PR #{pr} using ONLY the context below.\n\n{context}"
         )
         print(response["response"])

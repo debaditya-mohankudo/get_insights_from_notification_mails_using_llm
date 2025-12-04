@@ -37,6 +37,7 @@ class EmailMessage(BaseModel):
     tags: Optional[List[str]] = None
     linked_prs: Optional[List[int]] = None
     linked_tickets: Optional[List[str]] = None
+    contributors: Optional[List[str]] = None
 
     # ============================================================
     # FIELD-LEVEL VALIDATORS (v2)
@@ -66,6 +67,7 @@ class EmailMessage(BaseModel):
         "commits",
         "files_modified",
         "tags",
+        "contributors",
         mode="before"
     )
     def empty_list_to_none(cls, value):
@@ -137,6 +139,9 @@ class EmailMessage(BaseModel):
 
         if self.linked_tickets:
             parts.append(f"Linked Tickets: {', '.join(self.linked_tickets)}")
+
+        if self.contributors:
+            parts.append(f"Contributors: {', '.join(self.contributors)}")
 
         parts.append(self.body)
 

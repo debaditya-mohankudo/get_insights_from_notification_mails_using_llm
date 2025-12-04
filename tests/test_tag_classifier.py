@@ -1,5 +1,5 @@
 import pytest
-from tag_classifier import generate_tags_from_pr_title, classify_tags
+from _internal.tag_classifier import generate_tags_from_pr_title, classify_tags
 
 
 @pytest.mark.parametrize(

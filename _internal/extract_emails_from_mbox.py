@@ -3,9 +3,9 @@
 # ============================================================
 
 from typing import List
-from email_models import EmailMessage
-from markdown_sections import extract_heading_sections_with_content, extract_markdown_sections
-from helpers import (
+from _internal.email_models import EmailMessage
+from _internal.markdown_sections import extract_heading_sections_with_content, extract_markdown_sections
+from _internal.helpers import (
     extract_metadata_from_subject,
     extract_commits,
     extract_files_modified,
@@ -13,8 +13,8 @@ from helpers import (
     extract_pr_from_message_id,
 )
 import mailbox
-from tag_classifier import classify_tags
-from tags_from_file import classify_tags_from_files
+from _internal.tag_classifier import classify_tags
+from _internal.tags_from_file import classify_tags_from_files
 class EmailExtractor:
     def extract_emails_from_mbox(self, mbox_path: str) -> List[EmailMessage]:
         """Fast, allocation-optimized mbox → EmailMessage parser."""
@@ -86,6 +86,7 @@ class EmailExtractor:
                     repos=meta["repos"],
                     tickets=meta["tickets"],
                     pr_title=meta["pr_title"],
+                    contributors=meta["contributors"],
                     tags=combined_tags,
 
                     body=body,

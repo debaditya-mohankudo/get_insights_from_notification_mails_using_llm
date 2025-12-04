@@ -10,8 +10,15 @@ from sentence_transformers import SentenceTransformer
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
-from email_models import EmailMessage
-from extract_emails_from_mbox import EmailExtractor
+from _internal.email_models import EmailMessage
+from _internal.extract_emails_from_mbox import EmailExtractor
+
+# ============================================================
+#                   INDEX STORAGE SETUP
+# ============================================================      
+INDEX_DIR = Path("./index_data")
+os.makedirs(INDEX_DIR, exist_ok=True)
+print(f"✔ Index directory ready at: {INDEX_DIR.resolve()}")
 
 
 # ============================================================
@@ -33,8 +40,10 @@ def process_single_mbox(path: str) -> List[EmailMessage]:
 
 def embed_and_index(
     emails: List[EmailMessage],
-    index_path="index.faiss",
-    meta_path="meta.pkl"
+
+    index_path=f"{INDEX_DIR}/index.faiss",
+    meta_path=f"{INDEX_DIR}/meta.pkl"
+    
 ):
     print("🔢 Generating embeddings...")
     model = SentenceTransformer("all-MiniLM-L6-v2")

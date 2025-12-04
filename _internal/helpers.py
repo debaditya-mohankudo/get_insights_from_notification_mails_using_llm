@@ -55,7 +55,17 @@ FILE_PATH = re.compile(
     re.MULTILINE
 )
 
+MENTION_RE = re.compile(r'@([A-Za-z0-9-]+)')
+def extract_contributors(body: str):
+    """
+    Extract GitHub contributor usernames from an email body.
+    Returns a unique unordered list.
+    """
+    if not body:
+        return []
 
+    matches = MENTION_RE.findall(body)
+    return list(set(matches))
 # ============================================================
 #                 EMAIL BODY EXTRACTOR
 # ============================================================
@@ -163,6 +173,7 @@ def extract_metadata_from_subject(subject: str) -> dict:
     repos = REPO_FROM_SUBJECT.findall(subject)
     pr_numbers = PR_FROM_SUBJECT.findall(subject)
     tickets = TICKET_FROM_SUBJECT.findall(subject)
+    contributors = extract_contributors(subject)
 
     # Begin with original subject and remove extracted metadata
     clean_title = subject
@@ -189,6 +200,7 @@ def extract_metadata_from_subject(subject: str) -> dict:
         "pr_numbers": pr_numbers or None,
         "tickets": tickets or None,
         "pr_title": clean_title.strip(" -:_") or None,
+        "contributors": contributors or None,
     }
 
 
