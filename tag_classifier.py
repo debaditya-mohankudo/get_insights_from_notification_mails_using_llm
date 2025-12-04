@@ -22,6 +22,9 @@ RULES = {
         r"\bissue\b",
         r"\bcrash\b",
         r"\bhotfix\b",
+        r"\bresolve\b",
+        r"\baddress\b",
+
     ],
     "sql": [
         r"\bsql\b",
@@ -29,6 +32,8 @@ RULES = {
         r"\bdatabase\b",
         r"\bdb\b",
         r"\bquery\b",
+        r"\bcolumn\b",
+        r"\bindex\b",
     ],
     "ui": [
         r"\bui\b",
@@ -37,6 +42,12 @@ RULES = {
         r"\bbutton\b",
         r"\blayout\b",
         r"\bdesign\b",
+        r"\bdashboard\b",
+        r"\bwidget\b",
+        r"\bgarble\b",
+        r"\balign\b",
+        r"\bvisible\b",
+        r"\bdisplay\b",
     ],
     "api": [
         r"\bapi\b",

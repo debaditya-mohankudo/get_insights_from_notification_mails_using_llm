@@ -10,7 +10,7 @@ FILE_RULES = {
     "ui": [
         "/ui/", "/frontend/", "/components/", "/views/", "/templates/",
         ".css", ".scss", ".sass", ".less",
-        ".jsx", ".tsx", ".vue", ".html"
+        ".jsx", ".tsx", ".vue", ".html", ".phtml"
     ],
     "sql": [
         "/migrations/", "/migration/", "/db/", "/database/",
@@ -30,7 +30,7 @@ FILE_RULES = {
     ],
     "backend": [
         "/services/", "/models/", "/handlers/", "/core/",
-        ".go", ".rb", ".py", ".java", ".ts"
+        ".go", ".rb", ".py", ".java", ".ts", ".php"
     ],
 }
 
