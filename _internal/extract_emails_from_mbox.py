@@ -70,8 +70,8 @@ class EmailExtractor:
             tags_from_section = _classify_tags(','.join(','.join(s[1]) for s in sections))
 
             combined_tags = sorted(set(tags_from_title) | set(tags_from_files) | set(tags_from_section))
-            if  pr_numbers is not None:
-                print(tags_from_section, sections, pr_numbers)
+            #if  pr_numbers is not None:
+            #    #print(tags_from_section, sections, pr_numbers)
             # -----------------------------
             #  Build EmailMessage object
             # -----------------------------
