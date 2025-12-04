@@ -1,8 +1,5 @@
 (Auto-generated)
 
-Sure! Here is a **clean, production-ready README.md** for your GitHub repo, based entirely on your project files.
-
-If you want, I can also generate a **diagram**, **architecture image**, or **flowchart** afterward.
 
 ---
 
