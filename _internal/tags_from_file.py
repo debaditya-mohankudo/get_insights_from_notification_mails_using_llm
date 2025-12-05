@@ -14,7 +14,7 @@ FILE_RULES = {
     ],
     "sql": [
         "/migrations/", "/migration/", "/db/", "/database/",
-        ".sql"
+        ".sql", "Dao"
     ],
     "api": [
         "/api/", "/routes/", "/controllers/", "/endpoints/",
@@ -31,6 +31,10 @@ FILE_RULES = {
     "backend": [
         "/services/", "/models/", "/handlers/", "/core/",
         ".go", ".rb", ".py", ".java", ".ts", ".php"
+    ],
+    "authentication": [
+        "/auth/", "/authentication/", "/login/", "/signup/",
+        "oauth", "jwt", "sso", "login"
     ],
 }
 

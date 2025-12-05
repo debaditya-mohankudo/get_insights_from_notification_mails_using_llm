@@ -1,5 +1,6 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
+from _internal.helpers import CommitInfo
 
 
 class EmailMessage(BaseModel):
@@ -28,7 +29,7 @@ class EmailMessage(BaseModel):
     # --------------------------
     body: str
     markdown: Optional[dict] = None
-    commits: Optional[List[str]] = None
+    commits: Optional[List[CommitInfo]] = None
     files_modified: Optional[List[str]] = None
 
     # --------------------------
@@ -99,6 +100,8 @@ class EmailMessage(BaseModel):
         check if result contains email with same pr_number
         if yes, merge the two email messages( merge all the fields excpet body and sender and date, any field that is not a list, if existing field is None, update it with new field)
         markdown is merged by appending the lists inside dictionary
+        skip sonar related markdown merging
+        body is merged by appending the bodies with two new lines
         if no, append email_msg to results
         """
         pr_numbers = self.pr_numbers or []
@@ -111,7 +114,7 @@ class EmailMessage(BaseModel):
             for existing_email in result:
                 if existing_email.pr_numbers and pr in existing_email.pr_numbers:
                     # Merge fields
-                    for field in self.model_fields_set - {'body', 'sender', 'date', 'subject', 'message_id', 'pr_title', 'pr_numbers'}:
+                    for field in self.model_fields_set - {'sender', 'date', 'subject', 'message_id', 'pr_title', 'pr_numbers'}:
                         existing_value = getattr(existing_email, field)
                         new_value = getattr(self, field)
 
@@ -127,10 +130,16 @@ class EmailMessage(BaseModel):
                                     for key, items in new_value.items():
                                         if key in existing_value and items:
                                             if existing_value[key]:
-                                                existing_value[key].extend(items)
+                                                if 'sonar' not in key.lower() or 'sonar' not in ",".join(items).lower():
+                                                    existing_value[key].extend(items)
                                         else:
                                             existing_value[key] = items
                                     setattr(existing_email, field, existing_value)
+                            elif field == "body":
+                                # Append bodies
+                                if new_value:
+                                    combined_body = "\n\n".join([existing_value, new_value])
+                                    setattr(existing_email, field, combined_body)
                     found = True
                     break
             if not found:
@@ -172,9 +181,8 @@ class EmailMessage(BaseModel):
             if md_parts:
                 parts.append("Markdown Sections:\n" + "\n".join(md_parts))
 
-
         if self.commits:
-            parts.append("\n".join(self.commits))
+            parts.append("\n".join(f"{short},{message}" for sha, short, message in self.commits))
 
         if self.files_modified:
             parts.append("\n".join(self.files_modified))
