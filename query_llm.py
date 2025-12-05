@@ -230,7 +230,7 @@ def answer_query(query: str):
         # NO tag reranking here — you requested PR mode should NOT be modified
         context = build_context(emails)
         response = ollama.generate(
-            model="llama3.1",
+            model="llama3.2:3b",
             prompt=f"You are an expert PR analyst.\nSummarize PR #{pr} using ONLY the context below.\n\n{context}"
         )
         print(response["response"])

@@ -90,7 +90,52 @@ class EmailMessage(BaseModel):
         if isinstance(self.pr_title, str) and self.pr_title.strip() == "":
             self.pr_title = None
         return self
+    
+    def append_by_pr(self, result=[]) -> List:
+        """
+        results: List[EmailMessage]
+        email_msg: EmailMessage
+        get pr_number from email_msg
+        check if result contains email with same pr_number
+        if yes, merge the two email messages( merge all the fields excpet body and sender and date, any field that is not a list, if existing field is None, update it with new field)
+        markdown is merged by appending the lists inside dictionary
+        if no, append email_msg to results
+        """
+        pr_numbers = self.pr_numbers or []
+        if result == []:
+            result.append(self)
+            return result
 
+        for pr in pr_numbers:
+            found = False
+            for existing_email in result:
+                if existing_email.pr_numbers and pr in existing_email.pr_numbers:
+                    # Merge fields
+                    for field in self.model_fields_set - {'body', 'sender', 'date', 'subject', 'message_id', 'pr_title', 'pr_numbers'}:
+                        existing_value = getattr(existing_email, field)
+                        new_value = getattr(self, field)
+
+                        if isinstance(existing_value, list):
+                            if new_value:
+                                combined = set(existing_value) | set(new_value)
+                                setattr(existing_email, field, list(combined))
+                        else:
+                            if existing_value is None and new_value is not None:
+                                setattr(existing_email, field, new_value)
+                            elif field == "markdown":
+                                if existing_value and new_value:
+                                    for key, items in new_value.items():
+                                        if key in existing_value and items:
+                                            if existing_value[key]:
+                                                existing_value[key].extend(items)
+                                        else:
+                                            existing_value[key] = items
+                                    setattr(existing_email, field, existing_value)
+                    found = True
+                    break
+            if not found:
+                result.append(self)
+        return result
     # ============================================================
     # EMBEDDING TEXT BUILDER
     # ============================================================
