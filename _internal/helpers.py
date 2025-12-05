@@ -18,6 +18,9 @@ import re
 from bs4 import BeautifulSoup
 from typing import List, Optional
 
+from collections import namedtuple
+CommitInfo = namedtuple("CommitInfo", ["sha", "short", "message"])
+
 # ============================================================
 #                 REGEX DEFINITIONS
 # ============================================================
@@ -208,7 +211,7 @@ def extract_metadata_from_subject(subject: str) -> dict:
 #           COMMIT + FILE EXTRACTION HELPERS
 # ============================================================
 
-def extract_commits(text: str) -> Optional[List[str]]:
+def extract_commits(text: str) -> Optional[List[CommitInfo]]:
     """
     Extract commit entries from email body text.
 
@@ -229,7 +232,8 @@ def extract_commits(text: str) -> Optional[List[str]]:
         f"{m.group(1)} {m.group(2) or ''}".strip()
         for m in COMMIT_SIMPLE.finditer(text)
     ]
-    return commits or None
+    return parse_commit_lines(commits) or None
+ 
 
 
 def extract_files_modified(text: str) -> Optional[List[str]]:
@@ -259,7 +263,10 @@ def extract_files_modified(text: str) -> Optional[List[str]]:
         for m in raw_matches
     ]
 
-    return list(set(cleaned)) or None
+    flat_parts = [p for path in cleaned for p in path.split("/")]
+    files_modified = list(set(flat_parts)) if flat_parts else []
+
+    return files_modified
 
 def generate_tags_from_pr_title(pr_title: str):
     """
@@ -340,3 +347,18 @@ def extract_tickets_from_body(body: str) -> list[str]:
         return []
     TICKET_BODY_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,10}-\d{1,6})\b")
     return TICKET_BODY_RE.findall(body)
+
+
+
+def parse_commit_lines(raw_commits: List[str]) -> List[CommitInfo]:
+    commits = []
+    for line in raw_commits:
+        sha, msg = line.split(" ", 1)
+        commits.append(
+            CommitInfo(
+                sha=sha,
+                short=sha[:7],
+                message=msg.strip()
+            )
+        )
+    return commits

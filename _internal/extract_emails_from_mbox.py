@@ -36,7 +36,6 @@ class EmailExtractor:
         EmailMsg = EmailMessage
 
         results = []
-        append = results.append
 
         for msg in mbox:
             subject = msg.get("subject", "")
@@ -61,7 +60,10 @@ class EmailExtractor:
             pr_numbers = [int(p) for p in pr_numbers] if pr_numbers else None
             pr_numbers = list(set(pr_numbers)) if pr_numbers else None
 
-            files_modified = _extract_files(body)
+            files_modified = _extract_files(body) or []
+            # Further split paths into components for finer tagging
+            flat_parts = [p for path in files_modified for p in path.split("/")]
+            files_modified = list(set(flat_parts)) if files_modified else None
             markdown_sections = _extract_md(body)
             sections = extract_heading_sections_with_content(body)
 
@@ -71,12 +73,11 @@ class EmailExtractor:
 
             combined_tags = sorted(set(tags_from_title) | set(tags_from_files) | set(tags_from_section))
             #if  pr_numbers is not None:
-            #    #print(tags_from_section, sections, pr_numbers)
+            #    print(sections[0], sections[1], pr_numbers)
             # -----------------------------
             #  Build EmailMessage object
             # -----------------------------
-            append(
-                EmailMsg(
+            EmailMsg(
                     subject=subject,
                     date=date,
 
@@ -94,7 +95,6 @@ class EmailExtractor:
 
                     commits=_extract_commits(body),
                     files_modified=files_modified,
-                )
-            )
+                ).append_by_pr(result=results)
 
         return results
