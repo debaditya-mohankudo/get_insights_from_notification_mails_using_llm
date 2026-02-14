@@ -7,6 +7,8 @@ import ollama
 import re
 
 from _internal.email_models import EmailMessage
+from _internal.tag_classifier import extract_tags_miniLM
+from _internal.tags_from_file import classify_tags_from_files
 
 
 # ============================================================
@@ -83,13 +85,13 @@ def score_email(query: str, email: EmailMessage) -> float:
 
     if email.commits:
         for c in email.commits:
-            if c.lower() in q:
-                score += 4
+            if c.message in q:
+                score += 1
 
     if email.files_modified:
         for path in email.files_modified:
             if path.lower() in q:
-                score += 4
+                score += 3
 
     if email.pr_title and email.pr_title.lower() in q:
         score += 5
@@ -102,7 +104,7 @@ def score_email(query: str, email: EmailMessage) -> float:
     if email.contributors:
         for contributor in email.contributors:
             if contributor.lower() in q:
-                score += 2
+                score += 1
 
     return score
 
@@ -141,6 +143,13 @@ def search_semantic(query: str, top_k: int = 10) -> List[int]:
     _, idx = index.search(vec, top_k)
     return idx[0].tolist()
 
+def rerank_full(query, emails) -> List[EmailMessage]:
+    return sorted(
+        emails,
+        key=lambda e: score_email(query, e),
+        reverse=True
+    )
+
 
 # ============================================================
 #             FORMAT RESULTS → CONTEXT FOR LLM
@@ -168,17 +177,17 @@ def build_context(emails: List[EmailMessage]) -> str:
             block.append(f"Title: {e.pr_title}")
 
         if e.commits:
-            block.append("Commits:\n" + "\n".join(f"- {c}" for c in e.commits))
+            block.append("Commits:\n" + "\n".join(f"- {c.short} - {c.message}" for c in e.commits))
 
         if e.files_modified:
             block.append("Files Changed:\n" + "\n".join(f"- {c}" for c in e.files_modified))
 
         if e.markdown:
             md_parts = []
-            for section, items in e.markdown.items():
-                if items:
+            for section, content in e.markdown.items():
+                if content:
                     md_parts.append(f"## {section}")
-                    md_parts.extend(f"- {i}" for i in items)
+                    md_parts.extend(f"- {content}")
             if md_parts:
                 block.append("Markdown Sections:\n" + "\n".join(md_parts))
 
@@ -198,6 +207,12 @@ def build_context(emails: List[EmailMessage]) -> str:
 
 def answer_query(query: str):
     query = query.strip()
+    tags_from_query = extract_tags_miniLM(query)
+    tags_from_query_additional = classify_tags_from_files(re.findall(r'\b\w+\.\w{2,4}\b', query))
+    tags_from_query.extend(tags_from_query_additional)
+    print(f"Extracted tags from query: {tags_from_query}")
+    query += " " + ", ".join(tags_from_query)
+    print(f"Augmented query for search: {query}")
 
     # 1️⃣ Commit mode
     commit = extract_commit_hash(query)
@@ -242,6 +257,10 @@ def answer_query(query: str):
     vec = model.encode([query])
     _, idx = index.search(vec, 5)
     selected = [META[i] for i in idx[0]]
+
+
+    # Apply score_email
+    selected = rerank_full(query, selected)
 
     # 🔥 Apply tag reranking ONLY in semantic search
     selected = rerank_by_tags(query, selected)

@@ -3,6 +3,9 @@
 # ============================================================
 
 from typing import List
+from pathlib import Path
+import mailbox
+
 from _internal.email_models import EmailMessage
 from _internal.markdown_sections import extract_heading_sections_with_content, extract_markdown_sections
 from _internal.helpers import (
@@ -12,11 +15,10 @@ from _internal.helpers import (
     extract_body,
     extract_pr_from_message_id,
 )
-import mailbox
-from _internal.tag_classifier import classify_tags
+from _internal.tag_classifier import extract_tags_miniLM as classify_tags
 from _internal.tags_from_file import classify_tags_from_files
 class EmailExtractor:
-    def extract_emails_from_mbox(self, mbox_path: str) -> List[EmailMessage]:
+    def extract_emails_from_mbox(self, mbox_path: Path) -> List[EmailMessage]:
         """Fast, allocation-optimized mbox → EmailMessage parser."""
 
         print(f"📦 Parsing: {mbox_path}")
@@ -64,14 +66,16 @@ class EmailExtractor:
             # Further split paths into components for finer tagging
             flat_parts = [p for path in files_modified for p in path.split("/")]
             files_modified = list(set(flat_parts)) if files_modified else None
+            commits = _extract_commits(body) or []
             markdown_sections = _extract_md(body)
             sections = extract_heading_sections_with_content(body)
 
             tags_from_title = _classify_tags(meta["pr_title"])
+            tags_from_commits = _classify_tags(','.join(c.message for c in commits))
             tags_from_files = _classify_tags_from_files(files_modified or [])
             tags_from_section = _classify_tags(','.join(','.join(s[1]) for s in sections))
 
-            combined_tags = sorted(set(tags_from_title) | set(tags_from_files) | set(tags_from_section))
+            combined_tags = sorted(set(tags_from_title) | set(tags_from_files) | set(tags_from_section) | set(tags_from_commits))
             #if  pr_numbers is not None:
             #    print(sections[0], sections[1], pr_numbers)
             # -----------------------------
@@ -93,7 +97,7 @@ class EmailExtractor:
                     body=body,
                     markdown= markdown_sections,
 
-                    commits=_extract_commits(body),
+                    commits=commits,
                     files_modified=files_modified,
                 ).append_by_pr(result=results)
 

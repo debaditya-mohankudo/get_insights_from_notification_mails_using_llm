@@ -1,130 +1,62 @@
 # tag_classifier.py
 """
-Tag classifier for PR titles using:
-1. Keyword-based semantic rules
-2. (Optional) Embedding-based similarity scoring
+Tag classifier using: LLM-based classification.
+The LLM is allowed to choose from a predefined set of tags only.
 
 Used across the indexing pipeline to attach tags to EmailMessage objects.
 """
 
 from typing import List, Set
-import re
+import re, json
 
-# ------------------------------------------------------
-# 1. SEMANTIC KEYWORD RULES
-# ------------------------------------------------------
+import ollama
+from sentence_transformers import SentenceTransformer, util
 
-RULES = {
-    "bug": [
-        r"\bbug\b",
-        r"\bfix\b",
-        r"\berror\b",
-        r"\bissue\b",
-        r"\bcrash\b",
-        r"\bhotfix\b",
-        r"\bresolve\b",
-        r"\baddress\b",
+ALLOWED_TAGS = [
+    "bug", 
+    "fix", 
+    "feature",
+    "refactor", 
+    "docs", 
+    "performance",
+    "security", 
+    "breaking_change", 
+    "test", 
+    "dependency", 
+    "ui", 
+    "api",
+    "backend", 
+    "authentication", 
+    "sql",
+    "middleware", 
+    "logging", 
+    "monitoring",
+    "exceptions_handling",
+    "billing",
+    "subscriptions",
+    "notifications",
+    "search",
+    "caching",
+    "load_balancing",
+    "docker",
+    "cron_jobs",
+    "data_migration",
+    "cryptography",
+    "password_management",
+    "order_lifecycle",
+    "shopping_cart",
+    "payment_processing",
 
-    ],
-    "sql": [
-        r"\bsql\b",
-        r"\btable\b",
-        r"\bdatabase\b",
-        r"\bdb\b",
-        r"\bquery\b",
-        r"\bcolumn\b",
-        r"\bindex\b",
-    ],
-    "ui": [
-        r"\bui\b",
-        r"\bux\b",
-        r"\bfrontend\b",
-        r"\bbutton\b",
-        r"\blayout\b",
-        r"\bdesign\b",
-        r"\bdashboard\b",
-        r"\bwidget\b",
-        r"\bgarble\b",
-        r"\balign\b",
-        r"\bvisible\b",
-        r"\bdisplay\b",
-    ],
-    "api": [
-        r"\bapi\b",
-        r"\bendpoints?\b",
-        r"\brest\b",
-        r"\bjson\b",
-    ],
-    "security": [
-        r"\bsecurity\b",
-        r"\bxss\b",
-        r"\bsql[\s_-]?injection\b",
-        r"\bauth(entication|orization)?\b",
-        r"\bcsrf\b",
-    ],
-    "performance": [
-        r"\bperformance\b",
-        r"\bspeed\b",
-        r"\bfaster\b",
-        r"\boptimi[sz](e|ing|ation)?\b",
-        r"\blatency\b",
-    ],
-}
+    # add more as needed
+]
 
-# ------------------------------------------------------
-# 2. MAIN TAG GENERATION FUNCTION (Semantic Rules Only)
-# ------------------------------------------------------
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-def generate_tags_from_pr_title(pr_title: str) -> List[str]:
-    """
-    Generate tags for a PR title using simple semantic keyword matching.
-    This is fast and runs during indexing inside build_index.py.
-    """
-    if not pr_title:
-        return []
+def extract_tags_miniLM(text="", top_k: int = 5) -> list[str]:
+    query_emb = model.encode(text, convert_to_tensor=True)
+    tag_embs = model.encode(ALLOWED_TAGS, convert_to_tensor=True)
 
-    title = pr_title.lower()
-    tags: Set[str] = set()
+    sims = util.cos_sim(query_emb, tag_embs)[0]
+    top_idx = sims.topk(top_k).indices.tolist()
 
-    for tag, patterns in RULES.items():
-        for pattern in patterns:
-            if re.search(pattern, title):
-                tags.add(tag)
-                break
-
-    return sorted(tags)
-
-
-# ------------------------------------------------------
-# 3. OPTIONAL: EMBEDDING-BASED TAGGING (Plug-in API)
-# ------------------------------------------------------
-
-"""
-You may optionally use embeddings later.
-
-Example:
-
-def generate_embedding_tags(pr_title, embedding_model):
-    emb = embedding_model.encode([pr_title])[0]
-    scores = cosine similarity with predefined tag vectors
-    return tags above threshold
-
-Not implemented now because keyword rules already work well.
-"""
-
-
-# ------------------------------------------------------
-# 4. COMBINED TAGGING PIPELINE
-# ------------------------------------------------------
-
-def classify_tags(pr_title: str) -> List[str]:
-    """
-    Unified tagging entrypoint. Currently only semantic rules.
-    Later you can combine semantic + embedding scores here.
-    """
-    tags = set()
-
-    # semantic rules
-    tags.update(generate_tags_from_pr_title(pr_title))
-
-    return sorted(tags)
+    return [ALLOWED_TAGS[i] for i in top_idx]

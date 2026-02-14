@@ -7,7 +7,7 @@ import multiprocessing
 import faiss
 from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
 from _internal.email_models import EmailMessage
@@ -25,7 +25,7 @@ print(f"✔ Index directory ready at: {INDEX_DIR.resolve()}")
 #               WORKER FUNCTION (MULTIPROCESS SAFE)
 # ============================================================
 
-def process_single_mbox(path: str) -> List[EmailMessage]:
+def process_single_mbox(path: Path) -> List[EmailMessage]:
     """
     Extracts emails from a single mbox file.
     Runs inside a separate worker process (fork safe on macOS).
@@ -41,8 +41,8 @@ def process_single_mbox(path: str) -> List[EmailMessage]:
 def embed_and_index(
     emails: List[EmailMessage],
 
-    index_path=f"{INDEX_DIR}/index.faiss",
-    meta_path=f"{INDEX_DIR}/meta.pkl"
+    index_path=os.path.join(INDEX_DIR, "index.faiss"),
+    meta_path=os.path.join(INDEX_DIR, "meta.pkl")
     
 ):
     print("🔢 Generating embeddings...")
@@ -63,7 +63,7 @@ def embed_and_index(
     index.hnsw.efSearch = 64
     index.hnsw.efConstruction = 200
 
-    index.add(embeddings)
+    index.add(embeddings) # type: ignore
 
     faiss.write_index(index, index_path)
     with open(meta_path, "wb") as f:
@@ -87,8 +87,8 @@ if __name__ == "__main__":
     mbox_files = []
     for item in ROOT.iterdir():
         if item.suffix == ".mbox":
-            mbox_path = item / "mbox"
-            if mbox_path.exists():
+            mbox_path = os.path.join(item, "mbox")
+            if os.path.exists(mbox_path):
                 mbox_files.append(str(mbox_path))
 
     print(f"📦 Total mbox files discovered: {len(mbox_files)}")
@@ -100,7 +100,7 @@ if __name__ == "__main__":
 
     emails: List[EmailMessage] = []
 
-    with ProcessPoolExecutor(max_workers=cpu_count()) as executor:
+    with ThreadPoolExecutor(max_workers=cpu_count()//2) as executor:
         futures = {executor.submit(process_single_mbox, path): path for path in mbox_files}
 
         for future in tqdm(as_completed(futures), total=len(futures)):

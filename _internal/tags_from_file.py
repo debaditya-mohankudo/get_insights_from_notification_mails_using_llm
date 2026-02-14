@@ -9,12 +9,12 @@ from typing import List, Set
 FILE_RULES = {
     "ui": [
         "/ui/", "/frontend/", "/components/", "/views/", "/templates/",
-        ".css", ".scss", ".sass", ".less",
-        ".jsx", ".tsx", ".vue", ".html", ".phtml"
+        ".css", ".scss", ".sass", ".less", ".js",
+        ".jsx", ".tsx", ".vue", ".html", ".phtml", "page"
     ],
     "sql": [
         "/migrations/", "/migration/", "/db/", "/database/",
-        ".sql", "Dao"
+        ".sql", "dao"
     ],
     "api": [
         "/api/", "/routes/", "/controllers/", "/endpoints/",
@@ -34,7 +34,7 @@ FILE_RULES = {
     ],
     "authentication": [
         "/auth/", "/authentication/", "/login/", "/signup/",
-        "oauth", "jwt", "sso", "login"
+        "oauth", "jwt", "sso", "login", "signout", "2fa"
     ],
 }
 
