@@ -1,50 +1,75 @@
-(Auto-generated)
+# GitHub Notification Email Insight Engine
 
-# Keywords
--  **local LLM** (Ollama).
--  **searchable vector database**
--  **FAISS HNSW**
--  **GitHub notification emails**
----
-
-# 📘 **README.md — GitHub Notification Email Insight Engine**
-
-This project transforms your exported GitHub notification emails into a **searchable vector database**, enabling powerful natural-language queries about pull requests using a **local LLM** (Ollama).
-It is fully offline, fast, and optimized for PR-specific retrieval.
+A **fully local, offline RAG system** that parses exported Apple Mail GitHub notification `.mbox` files and enables natural-language querying about PRs, commits, and code changes using a **local LLM** (Ollama).
 
 ---
 
-# 🚀 Features
+## Architecture
+
+```
+.mbox files --> build_index.py --> FAISS index + metadata pickle
+                                          |
+                              query_llm.py --> Ollama (llama3.2:3b) --> answer
+```
+
+---
+
+## Key Components
+
+| File | Purpose |
+|---|---|
+| `build_index.py` | Parallel mbox extraction, SentenceTransformer embeddings, FAISS HNSW index |
+| `query_llm.py` | 3 query modes: **commit**, **PR**, **semantic**. Hybrid retrieval (exact match + vector search) with Ollama LLM |
+| `_internal/email_models.py` | Pydantic v2 `EmailMessage` model with validators and `append_by_pr()` merge strategy |
+| `_internal/extract_emails_from_mbox.py` | `EmailExtractor` - parses mbox, extracts metadata, classifies tags, merges by PR |
+| `_internal/helpers.py` | Regex-based extraction: PR numbers, repos, tickets, commits, files, contributors |
+| `_internal/tag_classifier.py` | Semantic tag classification via MiniLM cosine similarity against a predefined tag set |
+| `_internal/tags_from_file.py` | Rule-based tag classification from file paths |
+| `_internal/markdown_sections.py` | Extracts code blocks, headings, and lists from email bodies |
+| `convert_mbox_maildir.py` | Utility to convert mbox to maildir format |
+
+---
+
+## Features
 
 * Parse Apple Mail GitHub notification `.mbox` files
 * Extract structured metadata:
-
-  * PR numbers
-  * Repository names
-  * Jira tickets
+  * PR numbers, repository names, Jira tickets
   * Commit SHAs (normalized to first 7 chars)
-  * Files modified
-  * PR titles
+  * Files modified (split into path components for finer tagging)
+  * PR titles, contributors
   * Markdown sections (headings, lists, code blocks)
+* Emails **merged by PR number** (`append_by_pr`) so each PR becomes a single rich document
+* **Semantic tag classification** using MiniLM embedding similarity against 30 predefined tags
+* Tags derived from 3 sources: PR title, commit messages, and file paths
 * Build a **FAISS HNSW** vector index
 * Hybrid retrieval:
-
-  * Weighted exact match
-  * Semantic search fallback
+  * Weighted exact match scoring
+  * Semantic vector search
+  * Tag-based reranking
   * Strict PR filter
 * Query using a local model (`llama3.2:3b`)
-* Returns commit summaries, file changes, PR description, etc.
 
 ---
 
+## Tech Stack
+
+* **FAISS** (HNSW) for vector indexing
+* **SentenceTransformers** (`all-MiniLM-L6-v2`) for embeddings + tag classification
+* **Ollama** (`llama3.2:3b`) for answer generation
+* **Pydantic v2** for data modeling
+* **BeautifulSoup4** for HTML parsing
+* **tqdm** for progress bars
+* Python 3.10+
+
 ---
 
-# 📥 1. Preparing Your Data
+## Preparing Your Data
 
 Export your GitHub notification folders from **Apple Mail**:
 
 1. Select the mailbox
-2. Right click → **Export Mailbox**
+2. Right click -> **Export Mailbox**
 3. Place all exported folders in your project directory
 4. Each exported folder contains a `mbox` file:
 
@@ -54,9 +79,7 @@ Export your GitHub notification folders from **Apple Mail**:
 
 ---
 
-# 🏗 2. Building the Index
-
-Run:
+## Building the Index
 
 ```bash
 python build_index.py
@@ -64,85 +87,50 @@ python build_index.py
 
 What this script does:
 
-✔ Loads all `*.mbox/mbox` files
-✔ Parses each email body (plain + HTML → cleaned)
-✔ Extracts:
-
-* PR numbers (subject + Message-ID)
-* Repos
-* Tickets
-* Clean PR title
-* Commit list (regex match, normalized to 7 chars)
-* Files modified
-* Markdown sections
-  ✔ Builds a combined text representation via `EmailMessage.full_text()`
-  ✔ Encodes using **SentenceTransformers: all-MiniLM-L6-v2**
-  ✔ Saves:
-
-```
-index.faiss
-meta.pkl
-```
+1. Discovers all `*.mbox/mbox` files
+2. Extracts emails in parallel using `ThreadPoolExecutor`
+3. Parses each email body (plain + HTML, cleaned via BeautifulSoup)
+4. Extracts PR numbers (subject + Message-ID), repos, tickets, clean PR title, commits, files modified, markdown sections, contributors
+5. Classifies tags using MiniLM similarity (title, commits, file paths, section headings)
+6. Merges emails by PR number into single rich documents
+7. Encodes using **SentenceTransformers: all-MiniLM-L6-v2**
+8. Saves `index.faiss` and `meta.pkl` to `index_data/`
 
 ---
 
-# 🔍 3. Querying a PR
-
-Use natural language:
+## Querying
 
 ```bash
 python query_llm.py "pr #1234 commits and file changes"
 ```
 
-The query engine:
+The query engine operates in 3 modes:
 
-### Step 1 — Extract PR number
+### Commit Mode
 
-Example: `"1234"`
+Activated when the query contains a commit hash. Filters emails by commit and summarizes.
 
-### Step 2 — Weighted exact match
+### PR Mode
 
-Scores PR numbers, repos, tickets, commits, file paths, and PR title.
+Activated when the query contains `PR #N` or similar patterns. Filters emails by PR number and summarizes using Ollama.
 
-### Step 3 — Strict PR filter
+### Semantic Mode
 
-Ensures **only emails belonging to PR 1234** are considered.
+Fallback when no PR/commit is detected:
 
-### Step 4 — Semantic search fallback
-
-Augments the query with all repo/PR/ticket tokens to improve vector recall.
-
-### Step 5 — Format context chunks
-
-Includes:
-
-* commits
-* files modified
-* markdown code blocks
-* headings
-* lists
-* first 1500 chars of email body
-
-### Step 6 — Local LLM processing
-
-Uses:
-
-```python
-ollama.generate(model="llama3.2:3b")
-```
-
-The LLM is instructed to:
-
-* Answer **only about the exact PR** if it finds pr #number
-* Use only retrieved email fragments
-* Avoid hallucination
+1. Extracts tags from the query using MiniLM + file-path rules
+2. Augments query with extracted tags
+3. Performs FAISS vector search (top 5)
+4. Reranks results by exact-match scoring (PR numbers, repos, tickets, commits, files, tags, contributors)
+5. Reranks again by tag overlap
+6. Builds context and generates answer via Ollama
 
 ---
 
-# 🧠 Example Output
+## Example Output
 
 ```
-[Exact-match retrieval → 5 results]
+[Exact-match retrieval -> 5 results]
 
 ==================================================
 PR 1234 Summary:
@@ -156,67 +144,12 @@ PR 1234 Summary:
 
 ---
 
-# 🧩 Why This Works So Well
+## Requirements
 
-This project achieves high-precision PR answers because it uses:
+```bash
+pip install -r requirements.txt
+```
 
-### ✔ **Hybrid search**
+Dependencies: `faiss-cpu`, `numpy`, `tqdm`, `sentence-transformers`, `transformers`, `torch`, `protobuf`, `ollama`
 
-Exact + semantic retrieval
-→ almost never returns wrong PR emails.
-
-### ✔ **Metadata-rich indexing**
-
-Commits, PR titles, repos, tickets are treated as first-class search features.
-
-### ✔ **Context shaping**
-
-Context blocks contain structured + raw content.
-
-### ✔ **Local LLM with clear rules**
-
-Reduces hallucination significantly.
-
----
-
-# 🔧 Requirements
-
-* Python 3.10+
-* FAISS
-* sentence-transformers
-* BeautifulSoup4
-* tqdm
-* Ollama (for local LLM)
-* pytest
-
-
-
----
-
-# 🧪 Optional Improvements
-
-I can help you implement:
-
-* Change counting per file (`+/-` lines)
-* Repo-level analytics
-* Query augmentation via RAG-chain
-* Web UI
-* Embedding optimization (bge-small-en, nomic-embed-text, etc.)
-* PR graph linking (threads/comments/commits)
-
----
-
-# 🎉 You're Done!
-
-You now have a fully local, private, intelligent PR knowledge engine powered by GitHub emails.
-
----
-
-If you'd like, I can also generate:
-
-✅ A **diagram** of the data flow
-✅ A **project architecture SVG**
-✅ A **flowchart**
-✅ A **demo GIF**
-Just tell me which one.
-
+Also requires [Ollama](https://ollama.ai) running locally with the `llama3.2:3b` model pulled.
